@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import Accounts from './Accounts'
 
 function Dashboard() {
   return <div className="p-6"><h1 className="text-2xl font-bold">Dashboard</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
@@ -11,9 +12,6 @@ function Calendar() {
 }
 function Scheduled() {
   return <div className="p-6"><h1 className="text-2xl font-bold">Scheduled</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
-}
-function Accounts() {
-  return <div className="p-6"><h1 className="text-2xl font-bold">Accounts</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
 }
 
 const navItems = [
