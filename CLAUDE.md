@@ -1,15 +1,31 @@
 # Finance App — Claude Code Instructions
 
+## Prerequisites
+
+This project uses the **superpowers** workflow. Install it before starting any work:
+
+```
+/plugin install superpowers@superpowers-dev
+```
+
+All planning, implementation, TDD, code review, and branching follows the superpowers workflow. Do not write code without first completing the brainstorming → writing-plans → executing-plans sequence.
+
+---
+
 ## What This Is
 
 A local personal finance app replacing Quicken Classic for Windows for household use. Primary user is Laurie (non-technical). Mark maintains the app and is the only developer.
 
-See the full design spec before doing anything else:
+See the full design spec before doing anything:
 [`docs/superpowers/specs/2026-05-11-finance-app-design.md`](docs/superpowers/specs/2026-05-11-finance-app-design.md)
+
+---
 
 ## Current State
 
-Nothing is built yet beyond this file and the design spec. The next step is producing an implementation plan via the `writing-plans` superpowers skill, then building in the order defined in the spec.
+Nothing is built yet beyond this file and the design spec. The next step is producing an implementation plan via the superpowers `writing-plans` skill, then building in the order defined below.
+
+---
 
 ## Architecture (short version)
 
@@ -20,45 +36,16 @@ Nothing is built yet beyond this file and the design spec. The next step is prod
 - **Runs on:** Raspberry Pi Zero 2 W on the home network
 - **Access:** Any browser via `http://raspberrypi.local:3000` — no auth, single household
 
+---
+
 ## Prerequisites Before Coding
 
 - [ ] Plaid developer account — sign up at https://dashboard.plaid.com/signup (select "Personal use")
-- [ ] Plaid `client_id` and `secret` → go in `.env`, never committed
+- [ ] Plaid `client_id` and `secret` → go in `.env`, never committed to git
 - [ ] Pi Zero 2 W — Node.js 20 LTS install deferred to final build step
-- [ ] `.env` file at project root (gitignored) — template TBD during scaffold step
+- [ ] `.env` file at project root (gitignored) — template provided during scaffold step
 
-## Git Workflow
-
-- Never commit directly to `main`, even for single-line fixes
-- All changes go through a branch → PR → merge flow
-- Branch names should be descriptive (e.g. `feature/project-scaffold`, `feature/plaid-link`)
-- PRs should reference what they implement
-- Create a short-lived branch, commit, push, open PR — even for trivial changes
-
-## Planning
-
-- All code implementations require a written plan before any code is written. No vibe coding.
-- Plans live in `docs/plans/` as Markdown files (e.g. `docs/plans/01-project-scaffold.md`)
-- A plan must be detailed enough that implementation requires no on-the-fly discovery
-- Get explicit user approval of the plan before writing any code
-- If discovery during implementation reveals something the plan missed, stop and update the plan before proceeding
-
-## Testing
-
-- Follow TDD: write failing tests first, then implement
-- All tests must pass before opening a PR
-
-## Commits
-
-- Only commit when the user asks, except during active implementation steps
-- Never batch multiple plan steps into a single commit
-- Use clear commit messages describing what changed and why
-
-## Code Style
-
-- TypeScript throughout — no `any` unless absolutely necessary
-- Do not change punctuation, whitespace, or formatting in lines you are not otherwise modifying
-- Keep files focused — if a file is growing large, it is probably doing too much
+---
 
 ## Build Order
 
@@ -75,3 +62,12 @@ Implement in this sequence — do not skip ahead:
 9. Dashboard — four thumbnail widgets wired to live data
 10. Accounts view — Plaid connection list, re-auth flow, starting balance editor
 11. Pi Zero 2 W deployment — production setup, serve static files from Express
+
+---
+
+## Code Style
+
+- TypeScript throughout — no `any` unless absolutely necessary
+- Do not change punctuation, whitespace, or formatting in lines you are not otherwise modifying
+- Keep files focused — if a file is growing large, it is probably doing too much
+- Plans live in `docs/plans/` (e.g. `docs/plans/01-project-scaffold.md`)
