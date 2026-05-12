@@ -278,3 +278,44 @@ describe('POST /api/plaid/sync', () => {
     expect(item.status).toBe('needs_reauth')
   })
 })
+
+describe('GET /api/plaid/status', () => {
+  test('returns empty array when no items connected', async () => {
+    const res = await request(app).get('/api/plaid/status')
+    expect(res.status).toBe(200)
+    expect(res.body.items).toEqual([])
+  })
+
+  test('returns items with account_count and last_synced_at', async () => {
+    const db = getDb()
+    db.prepare(`
+      INSERT INTO plaid_items (id, institution_name, plaid_item_id, access_token, status, last_synced_at)
+      VALUES (50, 'Truist', 'item-truist', 'access-truist', 'active', '2026-05-10 12:00:00')
+    `).run()
+    db.prepare(`
+      INSERT INTO accounts (plaid_item_id, plaid_account_id, name, type, current_balance, is_active)
+      VALUES (50, 'acct-t1', 'Checking', 'depository', 1200, 1),
+             (50, 'acct-t2', 'Savings', 'depository', 3000, 1)
+    `).run()
+
+    const res = await request(app).get('/api/plaid/status')
+    expect(res.status).toBe(200)
+    expect(res.body.items).toHaveLength(1)
+    const item = res.body.items[0]
+    expect(item.institution_name).toBe('Truist')
+    expect(item.status).toBe('active')
+    expect(item.account_count).toBe(2)
+    expect(item.last_synced_at).toBe('2026-05-10 12:00:00')
+  })
+
+  test('returns needs_reauth status correctly', async () => {
+    const db = getDb()
+    db.prepare(`
+      INSERT INTO plaid_items (id, institution_name, plaid_item_id, access_token, status)
+      VALUES (51, 'Ally', 'item-ally', 'access-ally', 'needs_reauth')
+    `).run()
+
+    const res = await request(app).get('/api/plaid/status')
+    expect(res.body.items[0].status).toBe('needs_reauth')
+  })
+})

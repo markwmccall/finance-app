@@ -220,3 +220,22 @@ plaidRouter.post('/sync', async (_req, res) => {
 
   res.json({ results })
 })
+
+// GET /api/plaid/status
+// Returns all connected plaid_items with account count and last sync time
+plaidRouter.get('/status', (_req, res) => {
+  const db = getDb()
+  const items = db.prepare(`
+    SELECT
+      pi.id,
+      pi.institution_name,
+      pi.status,
+      pi.last_synced_at,
+      COUNT(a.id) AS account_count
+    FROM plaid_items pi
+    LEFT JOIN accounts a ON a.plaid_item_id = pi.id AND a.is_active = 1
+    GROUP BY pi.id
+    ORDER BY pi.institution_name
+  `).all()
+  res.json({ items })
+})
