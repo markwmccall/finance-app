@@ -325,9 +325,16 @@ Forecast recalculates on every page load. Output consumed by: Calendar day boxes
 
 **Sync flow (manual via "Sync Now"):**
 1. For each active `plaid_item`, call `/accounts/get` → update `accounts.current_balance`
-2. Call `/transactions/sync` with cursor → upsert new/modified, delete removed
+2. Call `/transactions/sync` with cursor → upsert new/modified, soft-delete removed
 3. Store updated cursor
 4. If `ITEM_LOGIN_REQUIRED` → set status to `needs_reauth`, show warning banner
+
+**Atomicity — each institution sync is a single SQLite transaction:**
+The Plaid API call (step 2) happens outside the transaction — it's a network call. Once the response is received, a single database transaction writes all transaction upserts, soft deletes, balance updates, and the cursor update together. Either everything commits or everything rolls back. The cursor is never updated separately from the data it represents.
+
+If a sync rolls back (power loss, crash, any error), the cursor stays at its previous value. The next sync sends the old cursor to Plaid, which re-delivers the same data. Because `plaid_transaction_id` is unique and upserts are idempotent, re-processing the same transactions is always safe.
+
+**SQLite WAL mode** (`PRAGMA journal_mode=WAL`) is enabled on startup — more resilient to corruption on power loss than SQLite's default journal mode.
 
 **Ally savings buckets:** not exposed by Plaid. Total balance only.
 
