@@ -16,3 +16,7 @@ export function getPlaidClient(): PlaidApi {
   client = new PlaidApi(config)
   return client
 }
+
+export function _resetForTesting(): void {
+  client = null
+}
