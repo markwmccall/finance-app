@@ -416,14 +416,30 @@ This kills bank API access and remote connectivity immediately.
 
 ## Build Order
 
+Implementation is broken into a POC and four phases. Each phase has its own implementation plan in `docs/plans/`.
+
+### POC 1 — Plaid Spike
+Validate the Plaid integration before building around it. Minimal Express + React app — no design, no SQLite. Wire up Plaid Link, connect one real account, fetch transactions, display in a plain list. Goal: prove the integration works end to end.
+
+### Phase 1 — Core App
 1. Project scaffold — monorepo structure, Express + React + Vite + TypeScript + SQLite wired up, running locally; includes PWA manifest + meta tags and `VITE_APP_NAME` config
-2. Plaid integration — Link widget, connect an account, store token, fetch transactions and balances
-3. Database schema — all six tables, seed categories with preset list, seed with test data
-4. Register view — synced transactions with running balance, account filter, category filter, split entry UI, category management
-5. Scheduled transactions CRUD — add/edit/delete recurring entries with all frequency types
-6. Balance forecasting engine — 90-day projection from current balance + scheduled transactions
-7. Calendar view — month grid (desktop full + mobile compact), transactions, projected balances, color coding
-8. Bar charts — per-account strips below calendar, independent scale, hover tooltips, horizontal scroll on mobile
-9. Dashboard — four thumbnail widgets wired to live data
-10. Accounts view — Plaid connection list, re-auth flow, starting balance editor
-11. Pi Zero 2 W deployment — production setup, serve static files from Express, Tailscale install + configuration
+2. Database schema — all six tables, seed categories with preset list, seed with test data
+3. Plaid integration — production-quality Link widget, connect accounts, store tokens, sync transactions and balances, re-auth flow
+4. Accounts view — Plaid connection list, manual account management, starting balance editor
+5. Register view — synced transactions with running balance, account filter, cleared toggle, manual transaction entry
+
+### Phase 2 — Forecasting & Calendar
+6. Scheduled transactions CRUD — add/edit/delete recurring entries with all frequency types
+7. Balance forecasting engine — 90-day projection from current balance + scheduled transactions
+8. Calendar view — month grid with transactions, projected balances, color coding (desktop)
+9. Bar charts — per-account strips below calendar, independent scale, hover tooltips
+
+### Phase 3 — Categories, Dashboard & Backup
+10. Categories and splits — category management, split entry UI, category filter in Register
+11. Dashboard — four thumbnail widgets wired to live data, configurable Register widget
+12. Backup and rollback — daily database backups, restore UI, sync preview before apply
+
+### Phase 4 — Mobile, PWA & Deployment
+13. Responsive design — all views adapted for mobile, bottom tab bar navigation
+14. PWA — manifest, icons, home screen install
+15. Deployment — Pi Zero 2 W production setup (or alternative hardware), serve static files from Express, Tailscale install + configuration
