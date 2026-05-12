@@ -38,7 +38,7 @@ Remote Access (via Tailscale)
 ```
 
 **TypeScript throughout** — shared types between API and frontend.
-**Plaid products:** Transactions, Auth, Balance.
+**Plaid products:** Transactions, Balance. (Auth is explicitly excluded — full account and routing numbers are never fetched or stored.)
 **Plaid plan:** Free Trial (personal use, up to 10 Items).
 
 ---
@@ -206,6 +206,7 @@ Six tables. SQLite via `better-sqlite3`.
 | name | TEXT | e.g. "Truist Checking" |
 | type | TEXT | From Plaid: `depository`, `credit`, `loan`, `investment` |
 | subtype | TEXT | From Plaid: `checking`, `savings`, `credit card`, etc. |
+| mask | TEXT | Last 4 digits from Plaid (e.g. "4823") — never full account number |
 | current_balance | REAL | Refreshed on each sync |
 | is_active | INTEGER | 1 = shown, 0 = hidden |
 
@@ -309,7 +310,7 @@ Forecast recalculates on every page load. Output consumed by: Calendar day boxes
 
 - **Plaid Link:** initial connection and re-auth (update mode)
 - **`/transactions/sync`:** incremental sync with cursor-based deduplication
-- **`/accounts/get`:** fetches current balances on sync
+- **`/accounts/get`:** fetches current balances and masked account numbers (last 4 digits) on sync — full account and routing numbers are never requested
 
 **Sync flow (manual via "Sync Now"):**
 1. For each active `plaid_item`, call `/accounts/get` → update `accounts.current_balance`
@@ -318,6 +319,24 @@ Forecast recalculates on every page load. Output consumed by: Calendar day boxes
 4. If `ITEM_LOGIN_REQUIRED` → set status to `needs_reauth`, show warning banner
 
 **Ally savings buckets:** not exposed by Plaid. Total balance only.
+
+---
+
+## Security
+
+**Data stored on the Pi:**
+- Transaction history, balances, payees — sensitive but read-only historical data
+- Plaid access tokens (in `plaid_items.access_token`) — most sensitive; allow API access to bank account data
+- Masked account numbers (last 4 digits only) — safe to store, never full account or routing numbers
+- `.env` file — contains Plaid credentials; gitignored, never committed
+
+**Encryption at rest:** Full-disk encryption on an always-on Pi that boots unattended is impractical — it requires a passphrase at every reboot. Risk is accepted given the low-probability threat model (opportunistic hardware theft, not targeted data extraction).
+
+**If the Pi is stolen — response procedure (takes 5 minutes):**
+1. Go to the Plaid dashboard → revoke all access tokens for all connected institutions
+2. Go to the Tailscale admin console → remove the Pi device from the network
+
+This kills bank API access and remote connectivity immediately.
 
 ---
 
