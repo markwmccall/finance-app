@@ -42,7 +42,8 @@ plaidRouter.post('/link-token', async (req, res) => {
     })
     res.json({ link_token: response.data.link_token })
   } catch (err) {
-    console.error('link-token error:', err)
+    const errData = (err as { response?: { data?: { error_code?: string; error_message?: string; request_id?: string } } }).response?.data
+    console.error('link-token error:', errData?.error_code, errData?.error_message, errData?.request_id)
     res.status(500).json({ error: 'Failed to create link token' })
   }
 })
@@ -111,7 +112,8 @@ plaidRouter.post('/exchange-token', async (req, res) => {
 
     res.json({ item_id: result.id, accounts: savedAccounts })
   } catch (err) {
-    console.error('exchange-token error:', err)
+    const errData = (err as { response?: { data?: { error_code?: string; error_message?: string; request_id?: string } } }).response?.data
+    console.error('exchange-token error:', errData?.error_code, errData?.error_message, errData?.request_id)
     res.status(500).json({ error: 'Failed to exchange token' })
   }
 })
@@ -121,8 +123,8 @@ plaidRouter.post('/exchange-token', async (req, res) => {
 plaidRouter.post('/sync', async (_req, res) => {
   const db = getDb()
   const items = db.prepare(
-    "SELECT id, plaid_item_id, access_token, cursor FROM plaid_items WHERE status != 'needs_reauth'"
-  ).all() as Array<{ id: number; plaid_item_id: string; access_token: string; cursor: string | null }>
+    'SELECT id, plaid_item_id, access_token, cursor, status FROM plaid_items'
+  ).all() as Array<{ id: number; plaid_item_id: string; access_token: string; cursor: string | null; status: string }>
 
   const results: Array<{ id: number; status: string; added?: number; modified?: number; removed?: number }> = []
 
@@ -182,6 +184,9 @@ plaidRouter.post('/sync', async (_req, res) => {
       const updateItem = db.prepare(
         "UPDATE plaid_items SET cursor = ?, last_synced_at = datetime('now') WHERE id = ?"
       )
+      const resetStatus = db.prepare(
+        "UPDATE plaid_items SET status = 'active' WHERE id = ?"
+      )
 
       db.transaction(() => {
         for (const tx of [...added, ...modified]) {
@@ -202,6 +207,7 @@ plaidRouter.post('/sync', async (_req, res) => {
         for (const acct of plaidAccounts) {
           updateBalance.run(acct.balances.current ?? 0, acct.account_id)
         }
+        resetStatus.run(item.id)
         updateItem.run(cursor ?? null, item.id)
       })()
 
@@ -213,7 +219,8 @@ plaidRouter.post('/sync', async (_req, res) => {
         results.push({ id: item.id, status: 'needs_reauth' })
         continue
       }
-      console.error(`sync error for item ${item.id}:`, err)
+      const errData = (plaidErr as { response?: { data?: { error_code?: string; error_message?: string; request_id?: string } } }).response?.data
+      console.error(`sync error for item ${item.id}:`, errData?.error_code, errData?.error_message, errData?.request_id)
       results.push({ id: item.id, status: 'error' })
     }
   }

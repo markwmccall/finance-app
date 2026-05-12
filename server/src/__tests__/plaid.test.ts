@@ -306,6 +306,7 @@ describe('GET /api/plaid/status', () => {
     expect(item.status).toBe('active')
     expect(item.account_count).toBe(2)
     expect(item.last_synced_at).toBe('2026-05-10 12:00:00')
+    expect(item.access_token).toBeUndefined()
   })
 
   test('returns needs_reauth status correctly', async () => {
