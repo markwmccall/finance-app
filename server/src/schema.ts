@@ -68,3 +68,52 @@ export function createTables(db: Database.Database): void {
     );
   `)
 }
+
+export function seedCategories(db: Database.Database): void {
+  const count = (db.prepare('SELECT COUNT(*) as n FROM categories').get() as { n: number }).n
+  if (count > 0) return
+
+  const insertParent = db.prepare(
+    'INSERT INTO categories (name, parent_id, is_system, is_active, sort_order) VALUES (?, NULL, 0, 1, ?)'
+  )
+  const insertChild = db.prepare(
+    'INSERT INTO categories (name, parent_id, is_system, is_active, sort_order) VALUES (?, ?, 0, 1, ?)'
+  )
+  const insertSystem = db.prepare(
+    'INSERT INTO categories (name, parent_id, is_system, is_active, sort_order) VALUES (?, NULL, 1, 1, 999)'
+  )
+
+  const seed = db.transaction(() => {
+    const parents: Record<string, number> = {}
+    const parentNames = ['Food', 'Transport', 'Home', 'Health', 'Personal', 'Entertainment', 'Income']
+    parentNames.forEach((name, i) => {
+      const result = insertParent.run(name, i)
+      parents[name] = result.lastInsertRowid as number
+    })
+
+    const children: Array<[string, string, number]> = [
+      ['Groceries',     'Food',          0],
+      ['Dining Out',    'Food',          1],
+      ['Gas',           'Transport',     0],
+      ['Parking',       'Transport',     1],
+      ['Utilities',     'Home',          0],
+      ['Household',     'Home',          1],
+      ['Healthcare',    'Health',        0],
+      ['Pharmacy',      'Health',        1],
+      ['Clothing',      'Personal',      0],
+      ['Personal Care', 'Personal',      1],
+      ['Subscriptions', 'Entertainment', 0],
+      ['Travel',        'Entertainment', 1],
+      ['Payroll',       'Income',        0],
+      ['Other Income',  'Income',        1],
+    ]
+
+    children.forEach(([name, parentName, order]) => {
+      insertChild.run(name, parents[parentName], order)
+    })
+
+    insertSystem.run('Uncategorized')
+  })
+
+  seed()
+}
