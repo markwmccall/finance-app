@@ -63,3 +63,104 @@ describe('POST /api/plaid/link-token', () => {
     expect(res.status).toBe(404)
   })
 })
+
+describe('POST /api/plaid/exchange-token', () => {
+  test('exchanges public token and stores item + accounts', async () => {
+    mockExchangeToken.mockResolvedValueOnce({
+      data: { access_token: 'access-sandbox-xyz', item_id: 'plaid-item-abc' },
+    })
+    mockAccountsGet.mockResolvedValueOnce({
+      data: {
+        accounts: [
+          {
+            account_id: 'acc-001',
+            name: 'Gold Standard Checking',
+            type: 'depository',
+            subtype: 'checking',
+            mask: '1234',
+            balances: { current: 1500.00 },
+          },
+        ],
+      },
+    })
+
+    const res = await request(app)
+      .post('/api/plaid/exchange-token')
+      .send({ public_token: 'public-sandbox-token', institution_name: 'First National Bank' })
+
+    expect(res.status).toBe(200)
+    expect(res.body.item_id).toBeDefined()
+    expect(res.body.accounts).toHaveLength(1)
+    expect(res.body.accounts[0].name).toBe('Gold Standard Checking')
+
+    // Verify DB writes
+    const db = getDb()
+    const item = db.prepare("SELECT * FROM plaid_items WHERE plaid_item_id = 'plaid-item-abc'").get() as any
+    expect(item).toBeDefined()
+    expect(item.institution_name).toBe('First National Bank')
+    expect(item.access_token).toBe('access-sandbox-xyz')
+    expect(item.status).toBe('active')
+
+    const accounts = db.prepare('SELECT * FROM accounts WHERE plaid_item_id = ?').all(item.id) as any[]
+    expect(accounts).toHaveLength(1)
+    expect(accounts[0].plaid_account_id).toBe('acc-001')
+    expect(accounts[0].current_balance).toBe(1500.00)
+  })
+
+  test('returns 400 when public_token missing', async () => {
+    const res = await request(app).post('/api/plaid/exchange-token').send({})
+    expect(res.status).toBe(400)
+  })
+
+  test('re-connecting same institution upserts without duplicating', async () => {
+    // First connect
+    mockExchangeToken.mockResolvedValueOnce({
+      data: { access_token: 'access-sandbox-old', item_id: 'plaid-item-abc' },
+    })
+    mockAccountsGet.mockResolvedValueOnce({
+      data: {
+        accounts: [
+          {
+            account_id: 'acc-001',
+            name: 'Gold Standard Checking',
+            type: 'depository',
+            subtype: 'checking',
+            mask: '1234',
+            balances: { current: 1000.00 },
+          },
+        ],
+      },
+    })
+    await request(app)
+      .post('/api/plaid/exchange-token')
+      .send({ public_token: 'public-token-1', institution_name: 'First National Bank' })
+
+    // Re-connect (same plaid_item_id, new access_token)
+    mockExchangeToken.mockResolvedValueOnce({
+      data: { access_token: 'access-sandbox-new', item_id: 'plaid-item-abc' },
+    })
+    mockAccountsGet.mockResolvedValueOnce({
+      data: {
+        accounts: [
+          {
+            account_id: 'acc-001',
+            name: 'Gold Standard Checking',
+            type: 'depository',
+            subtype: 'checking',
+            mask: '1234',
+            balances: { current: 2000.00 },
+          },
+        ],
+      },
+    })
+    await request(app)
+      .post('/api/plaid/exchange-token')
+      .send({ public_token: 'public-token-2', institution_name: 'First National Bank' })
+
+    const db = getDb()
+    const itemCount = (db.prepare("SELECT COUNT(*) as n FROM plaid_items WHERE plaid_item_id = 'plaid-item-abc'").get() as any).n
+    expect(itemCount).toBe(1)
+    const accCount = (db.prepare("SELECT COUNT(*) as n FROM accounts WHERE plaid_account_id = 'acc-001'").get() as any).n
+    expect(accCount).toBe(1)
+  })
+})
