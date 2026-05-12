@@ -96,7 +96,7 @@ Four thumbnail widgets in a 2×2 grid. Each widget shows live data and is clicka
 
 | Widget | Contents |
 |---|---|
-| Register | Current checking balance + last 3 transactions |
+| Register | Balance + last 3 transactions for a user-configured account; gear icon on the widget selects which account to display; defaults to the first active account |
 | Calendar | Mini month grid, color-coded by balance health, warning if any day goes negative |
 | Upcoming | Next 14 days of scheduled transactions (bills in red, income in green) |
 | Accounts | All account balances, net worth total, last synced timestamp |
