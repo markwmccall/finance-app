@@ -1,5 +1,5 @@
 import { createDb, getDb, closeDb } from '../db'
-import { createTables, seedCategories } from '../schema'
+import { createTables, seedCategories, seedTestData } from '../schema'
 
 beforeEach(() => {
   createDb(':memory:')
@@ -87,4 +87,45 @@ test('Food · Groceries child is linked to Food parent', () => {
   const parent = db.prepare("SELECT id FROM categories WHERE name = 'Food'").get() as { id: number }
   const child = db.prepare("SELECT parent_id FROM categories WHERE name = 'Groceries'").get() as { parent_id: number }
   expect(child.parent_id).toBe(parent.id)
+})
+
+test('seedTestData inserts 1 plaid_item', () => {
+  const db = getDb()
+  seedCategories(db)
+  seedTestData(db)
+  const count = (db.prepare('SELECT COUNT(*) as n FROM plaid_items').get() as { n: number }).n
+  expect(count).toBe(1)
+})
+
+test('seedTestData inserts 2 accounts', () => {
+  const db = getDb()
+  seedCategories(db)
+  seedTestData(db)
+  const count = (db.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n
+  expect(count).toBe(2)
+})
+
+test('seedTestData inserts 10 transactions', () => {
+  const db = getDb()
+  seedCategories(db)
+  seedTestData(db)
+  const count = (db.prepare('SELECT COUNT(*) as n FROM transactions').get() as { n: number }).n
+  expect(count).toBe(10)
+})
+
+test('seedTestData inserts 2 scheduled transactions', () => {
+  const db = getDb()
+  seedCategories(db)
+  seedTestData(db)
+  const count = (db.prepare('SELECT COUNT(*) as n FROM scheduled_transactions').get() as { n: number }).n
+  expect(count).toBe(2)
+})
+
+test('seedTestData is idempotent', () => {
+  const db = getDb()
+  seedCategories(db)
+  seedTestData(db)
+  seedTestData(db)
+  const count = (db.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n
+  expect(count).toBe(2)
 })

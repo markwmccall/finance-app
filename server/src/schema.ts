@@ -117,3 +117,73 @@ export function seedCategories(db: Database.Database): void {
 
   seed()
 }
+
+export function seedTestData(db: Database.Database): void {
+  const existingAccounts = (db.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n
+  if (existingAccounts > 0) return
+
+  const now = new Date().toISOString()
+
+  const item = db.prepare(
+    `INSERT INTO plaid_items (institution_name, plaid_item_id, access_token, status, last_synced_at)
+     VALUES (?, ?, ?, 'active', ?)`
+  ).run('Truist', 'item-test-001', 'access-sandbox-test', now)
+
+  const itemId = item.lastInsertRowid
+
+  const checking = db.prepare(
+    `INSERT INTO accounts (plaid_item_id, plaid_account_id, name, type, subtype, mask, is_manual, starting_balance, current_balance, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 1)`
+  ).run(itemId, 'acc-checking-001', 'Truist Checking', 'depository', 'checking', '4823', 4250.00)
+
+  db.prepare(
+    `INSERT INTO accounts (plaid_item_id, plaid_account_id, name, type, subtype, mask, is_manual, starting_balance, current_balance, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 1)`
+  ).run(itemId, 'acc-savings-001', 'Truist Savings', 'depository', 'savings', '7291', 8500.00)
+
+  const checkingId = checking.lastInsertRowid
+  const today = new Date()
+
+  const dateStr = (daysAgo: number): string => {
+    const d = new Date(today)
+    d.setDate(d.getDate() - daysAgo)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const insertTx = db.prepare(
+    `INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount, is_cleared, is_manual)
+     VALUES (?, ?, ?, ?, ?, ?, 0)`
+  )
+
+  const txData: Array<[string, string, number, number]> = [
+    [dateStr(0),  'Publix',       -84.32,   0],
+    [dateStr(1),  'Shell',        -52.40,   1],
+    [dateStr(2),  'Netflix',      -22.99,   1],
+    [dateStr(3),  'Chick-fil-A',  -18.45,   1],
+    [dateStr(5),  'Amazon',       -64.99,   1],
+    [dateStr(7),  'Payroll',     3200.00,   1],
+    [dateStr(8),  'Duke Energy',  -145.00,  1],
+    [dateStr(10), 'Walgreens',    -28.50,   1],
+    [dateStr(12), 'Target',       -103.22,  1],
+    [dateStr(14), 'Payroll',     3200.00,   1],
+  ]
+
+  txData.forEach(([date, payee, amount, cleared], i) => {
+    insertTx.run(checkingId, `plaid-tx-test-${String(i + 1).padStart(3, '0')}`, date, payee, amount, cleared)
+  })
+
+  const firstOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1).toISOString().slice(0, 10)
+  const twoWeeksOut = new Date(today)
+  twoWeeksOut.setDate(twoWeeksOut.getDate() + 14)
+  const twoWeeksOutStr = twoWeeksOut.toISOString().slice(0, 10)
+
+  db.prepare(
+    `INSERT INTO scheduled_transactions (account_id, payee, amount, frequency, frequency_day1, next_due_date, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, 1)`
+  ).run(checkingId, 'Rent', -1800.00, 'monthly', 1, firstOfNextMonth)
+
+  db.prepare(
+    `INSERT INTO scheduled_transactions (account_id, payee, amount, frequency, next_due_date, is_active)
+     VALUES (?, ?, ?, ?, ?, 1)`
+  ).run(checkingId, 'Payroll', 3200.00, 'every two weeks', twoWeeksOutStr)
+}
