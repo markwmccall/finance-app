@@ -11,6 +11,7 @@ export function createDb(dbPath?: string): Database.Database {
   }
   instance = new Database(resolvedPath)
   instance.pragma('journal_mode = WAL')
+  instance.pragma('foreign_keys = ON')
   return instance
 }
 
