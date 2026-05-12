@@ -6,7 +6,7 @@ let instance: Database.Database | null = null
 
 export function createDb(dbPath?: string): Database.Database {
   const resolvedPath = dbPath ?? process.env.DB_PATH ?? path.join(__dirname, '..', '..', 'data', 'finance.db')
-  if (dbPath !== ':memory:') {
+  if (resolvedPath !== ':memory:') {
     fs.mkdirSync(path.dirname(resolvedPath), { recursive: true })
   }
   instance = new Database(resolvedPath)
