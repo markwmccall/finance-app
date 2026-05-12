@@ -172,11 +172,20 @@ Fields per entry: Payee · Amount · Account · Frequency · Next due date · En
 
 Plaid connection management.
 
-- List of connected accounts with institution name, account name, type, and current balance
+**Plaid-connected accounts:**
+- List of connected accounts with institution name, account name, type, current balance, and masked number
 - Connection status (connected / needs re-auth)
 - **Re-auth flow:** warning banner on Dashboard and Accounts when a token goes stale; "Reconnect" button opens Plaid Link in update mode
 - Add new institution via Plaid Link
-- Set starting balance manually (forecast anchor before first sync)
+- Set starting balance (forecast anchor before first sync)
+
+**Manual accounts:**
+- Add a manual account: name, type, subtype, starting balance, optional last-4 identifier
+- Edit name, type, subtype, starting balance at any time
+- Delete a manual account (and optionally its transactions)
+- Manual accounts display alongside Plaid accounts with a "Manual" badge
+- No sync indicator — balance stays current automatically as transactions are added/edited/deleted
+- All transactions on manual accounts are entered via the existing manual transaction entry UI in the Register
 
 ---
 
@@ -201,13 +210,15 @@ Six tables. SQLite via `better-sqlite3`.
 | Column | Type | Notes |
 |---|---|---|
 | id | INTEGER PK | |
-| plaid_item_id | INTEGER FK | → plaid_items |
-| plaid_account_id | TEXT | From Plaid |
-| name | TEXT | e.g. "Truist Checking" |
-| type | TEXT | From Plaid: `depository`, `credit`, `loan`, `investment` |
-| subtype | TEXT | From Plaid: `checking`, `savings`, `credit card`, etc. |
-| mask | TEXT | Last 4 digits from Plaid (e.g. "4823") — never full account number |
-| current_balance | REAL | Refreshed on each sync |
+| plaid_item_id | INTEGER FK | → plaid_items; NULL for manual accounts |
+| plaid_account_id | TEXT | From Plaid; NULL for manual accounts |
+| name | TEXT | e.g. "Truist Checking", "Cash Wallet" |
+| type | TEXT | `depository`, `credit`, `loan`, `investment`, `manual` |
+| subtype | TEXT | `checking`, `savings`, `credit card`, `cash`, `other`, etc. |
+| mask | TEXT | Last 4 digits (Plaid-sourced or manually entered); NULL if not applicable |
+| is_manual | INTEGER | 1 = manually managed, 0 = Plaid-connected |
+| starting_balance | REAL | Opening balance for manual accounts; forecast anchor for Plaid accounts before first sync |
+| current_balance | REAL | For Plaid accounts: refreshed on each sync. For manual accounts: maintained by the app whenever transactions are added, edited, or deleted (starting_balance + sum of all transactions) |
 | is_active | INTEGER | 1 = shown, 0 = hidden |
 
 ### `transactions`
