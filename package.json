@@ -1,0 +1,13 @@
+{
+  "name": "finance-app",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
