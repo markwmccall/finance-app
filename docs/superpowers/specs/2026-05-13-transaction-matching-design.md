@@ -189,56 +189,60 @@ If no accounts are connected, the button is disabled.
 
 ---
 
-## UI — Review Banner
+## UI — Sync Queue (Pseudo-Register)
 
 ### When it appears
-On the Register page: if `GET /api/sync/queue` returns rows for the currently-selected account, a review banner renders above the transaction list. The banner persists across page reloads until the queue for that account is empty.
+On the Register page: if `GET /api/sync/queue` returns rows for the currently-selected account, the sync queue renders above the transaction list. It persists across page reloads — closing it does not clear the queue.
 
-### Structure
+### Layout
+The queue sits directly above the live register, separated by a thin rule. Together they form one continuous scrollable view. The queue has a blue header bar and its own column headers ("DATE · PAYEE (from Plaid) · AMOUNT · STATUS & ACTION"). The live register's column headers follow immediately below.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ [amber header] Truist Checking — 1 needs review · 9 new  [Accept all & close]
-├─── ✓ 2 auto-matched ──────────────────────────────── ▸ show ───┤  (collapsed, green)
-├─── ⚡ 1 needs review ──────────────────────────────────────────┤  (expanded, amber)
-│    [match card with Merge / Add as new / Merge with… / Delete]  │
-├─── 9 new transactions — will be added ────────────── ▸ show ───┤  (collapsed, gray)
-└─────────────────────────────────────────────────────────────────┘
-```
+### Queue rows
+Each downloaded Plaid transaction appears as one row with a colored status badge:
 
-**Auto-matched section** (green, collapsed by default):
-- Expand to see each pair (manual row ↔ Plaid row, match reason shown).
-- Each pair has an "undo" link that calls `undo-match`, moving it to `needs_review`.
-- "Accept all" button accepts the whole section.
+| Status | Badge | Behavior |
+|---|---|---|
+| `auto_matched` | green "✓ matched" | Shows "→ [matched payee]" and an "undo" link. No action required. |
+| `needs_review` | amber "⚡ review" | Shows confidence score ("91% match — Target Run"). Clicking the row expands inline action buttons. |
+| `new` | gray "new" | Shows "will be added" and a "✕ skip" link to discard. |
 
-**Needs review section** (amber, expanded by default):
-- Each item shows a side-by-side card: Plaid transaction on left, manual candidate on right, match reason as a label (e.g., "same amount, ±1 day").
-- Actions: **✓ Merge** (calls `accept`), **Add as new** (calls `accept` with `force_new: true`), **Merge with…** (see below), **Delete** (calls `reject`).
+### Row selection and register highlight
+Clicking any `auto_matched` or `needs_review` row selects it. When selected:
+- The selected queue row gets an amber left border and full-color treatment; all other queue rows dim.
+- The matched transaction in the live register below highlights in the same amber with a matching left border; all other register rows dim.
+- No label or annotation is needed — the shared color makes the connection self-evident.
+- Clicking elsewhere deselects and restores normal appearance.
 
-**New transactions section** (gray, collapsed by default):
-- Expand to see the list. Each row has a "✕ remove" to reject that one transaction.
-- "Accept all & close" button in the banner header calls `accept-all` for the account, then closes the banner.
+### Inline actions (needs_review rows, expanded on click)
+- **✓ Yes, merge** — calls `accept`. Copies `plaid_transaction_id` onto the manual transaction, marks cleared.
+- **Add as new** — calls `accept` with `force_new: true`. Inserts as a new register transaction, ignoring the candidate match.
+- **Merge with…** — enters pick mode (see below).
+- **Discard** — calls `reject`. Removes the Plaid transaction from the queue without adding it to the register.
 
-### "Merge with…" interaction
-When the user clicks "Merge with…" on a needs-review item:
-1. The banner stays fully open but the match card enters an **awaiting** state (shows "Scroll down and tap the transaction to merge with").
-2. Every register row below the banner gains a visible **"↑ merge"** button.
+For `auto_matched` rows, the only action is **undo** — calls `undo-match`, demoting the row to `needs_review`.
+
+There is no post-acceptance undo. Once accepted, the transaction is in the register and can be edited or deleted there like any other transaction.
+
+### "Merge with…" pick mode
+When the user clicks "Merge with…":
+1. The selected queue row enters an awaiting state: action buttons are replaced with "Scroll down and tap a transaction to merge with" and a "Cancel" link.
+2. Every live register row gains a visible **"↑ merge"** button.
 3. Tapping a register row calls `POST /api/sync/queue/:id/merge-with` with that row's `transaction_id`.
-4. A "Cancel" link in the awaiting card exits pick mode without any action.
+4. "Cancel" exits pick mode; the row returns to its expanded action state.
 
-Only one item can be in "awaiting" state at a time.
+Only one queue row can be in pick mode at a time.
 
-### Closing the banner
-- Clicking ✕ collapses the banner — the queue is unchanged. The banner reopens next visit.
-- "Accept all & close" processes all `auto_matched` and `new` items, then closes.
-- When the queue for the account reaches zero items, the banner auto-dismisses.
+### Closing the queue
+- **✕** collapses the queue for the session. The queue is unchanged — unreviewed items remain. The queue reappears automatically next time this account's register is opened.
+- **"Accept all & close"** calls `accept-all` for the account (processes all `auto_matched` and `new` items; leaves `needs_review` items alone), then collapses the queue.
+- When the queue for the account reaches zero items, the queue auto-collapses.
 
 ---
 
 ## Component Architecture
 
 ### New files
-- `client/src/SyncBanner.tsx` — review banner component. Receives queue data for one account as props; emits `onQueueEmpty` callback when all items are processed.
+- `client/src/SyncQueue.tsx` — pseudo-register queue component. Receives queue data for one account as props; manages row selection state and register highlight via a `highlightTxId` callback to the parent; emits `onQueueEmpty` when all items are processed.
 - `client/src/SyncWidget.tsx` — dashboard sync widget. Fetches queue summary; shows last-synced time, pending badge, and "Sync now" button.
 
 ### Sync progress streaming
@@ -272,7 +276,7 @@ SSE is the right fit here: the server needs to push multiple events over time, t
 - `server/src/schema.ts` — add `sync_review_queue` table definition; add `migrateSchema` entry for it.
 - `server/src/routes/sync.ts` — modify sync handler to use queue logic; add new queue endpoints.
 - `server/src/matching.ts` — new module: payee normalization, Jaro-Winkler scoring, match logic (extracted for testability).
-- `client/src/Register.tsx` — fetch queue for current account on load; render `<SyncBanner>` above the transaction list when queue rows exist.
+- `client/src/Register.tsx` — fetch queue for current account on load; render `<SyncQueue>` above the transaction list when queue rows exist; accept `highlightTxId` from `SyncQueue` and apply amber highlight + dim to matching register rows.
 - `client/src/Dashboard.tsx` — render `<SyncWidget>`.
 - `client/src/Accounts.tsx` — add "Sync all" button; show per-account sync progress.
 
