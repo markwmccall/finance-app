@@ -241,6 +241,49 @@ transactionsRouter.patch('/:id/cleared', (req: Request, res: Response) => {
   }
 })
 
+transactionsRouter.patch('/:id', (req: Request, res: Response) => {
+  try {
+    const db = getDb()
+    const id = Number(req.params.id)
+    const { date, payee, amount, check_number } = req.body as {
+      date?: string
+      payee?: string
+      amount?: number
+      check_number?: string | null
+    }
+
+    if (!date || !payee || amount === undefined || amount === null) {
+      res.status(400).json({ error: 'date, payee, and amount are required' })
+      return
+    }
+
+    const tx = db.prepare(
+      'SELECT id FROM transactions WHERE id = ? AND is_removed = 0'
+    ).get(id) as { id: number } | undefined
+    if (!tx) {
+      res.status(404).json({ error: 'Transaction not found' })
+      return
+    }
+
+    const splitRow = db.prepare(
+      'SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total FROM transaction_splits WHERE transaction_id = ?'
+    ).get(id) as { count: number; total: number }
+    if (splitRow.count > 0 && Math.abs(splitRow.total - amount) > 0.001) {
+      res.status(400).json({ error: 'Split amounts must sum to transaction amount' })
+      return
+    }
+
+    db.prepare(
+      'UPDATE transactions SET date = ?, payee = ?, amount = ?, check_number = ? WHERE id = ?'
+    ).run(date, payee.trim(), amount, check_number?.trim() || null, id)
+
+    res.json({ id })
+  } catch (err) {
+    console.error('PATCH /api/transactions/:id error:', err)
+    res.status(500).json({ error: 'Failed to update transaction' })
+  }
+})
+
 transactionsRouter.put('/:id/splits', (req: Request, res: Response) => {
   try {
     const db = getDb()

@@ -23,6 +23,12 @@ function getCategoryId(name: string): number {
   return row.id
 }
 
+function updateSplitAmount(txId: number, newAmount: number) {
+  getDb().prepare(
+    'UPDATE transaction_splits SET amount = ? WHERE transaction_id = ?'
+  ).run(newAmount, txId)
+}
+
 describe('GET /api/transactions', () => {
   test('returns transactions newest-first with running balance', async () => {
     const res = await request(app).get('/api/transactions')
@@ -348,5 +354,95 @@ describe('PUT /api/transactions/:id/splits', () => {
       splits: [{ category_id: catId, amount: -50 }],
     })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('PATCH /api/transactions/:id', () => {
+  function getTx() {
+    return getDb().prepare(
+      'SELECT id, amount FROM transactions WHERE is_removed = 0 LIMIT 1'
+    ).get() as { id: number; amount: number }
+  }
+
+  test('updates date, payee, amount, and check_number', async () => {
+    const tx = getTx()
+    const catId = getCategoryId('Groceries')
+    addSplit(tx.id, catId, tx.amount)
+    const newAmount = parseFloat((tx.amount - 10).toFixed(2))
+    updateSplitAmount(tx.id, newAmount)
+
+    const res = await request(app).patch(`/api/transactions/${tx.id}`).send({
+      date: '2026-01-15',
+      payee: 'Updated Payee',
+      amount: newAmount,
+      check_number: '9999',
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.id).toBe(tx.id)
+
+    const updated = getDb().prepare(
+      'SELECT date, payee, amount, check_number FROM transactions WHERE id = ?'
+    ).get(tx.id) as { date: string; payee: string; amount: number; check_number: string | null }
+    expect(updated.date).toBe('2026-01-15')
+    expect(updated.payee).toBe('Updated Payee')
+    expect(updated.amount).toBeCloseTo(newAmount, 2)
+    expect(updated.check_number).toBe('9999')
+  })
+
+  test('returns 400 when splits do not sum to new amount', async () => {
+    const tx = getTx()
+    const catId = getCategoryId('Groceries')
+    addSplit(tx.id, catId, tx.amount)
+
+    const res = await request(app).patch(`/api/transactions/${tx.id}`).send({
+      date: '2026-01-15',
+      payee: 'Test',
+      amount: tx.amount + 100,
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('Split amounts must sum to transaction amount')
+  })
+
+  test('returns 404 for non-existent transaction', async () => {
+    const res = await request(app).patch('/api/transactions/99999').send({
+      date: '2026-01-15',
+      payee: 'Ghost',
+      amount: -50,
+    })
+    expect(res.status).toBe(404)
+  })
+
+  test('returns 404 for soft-deleted transaction', async () => {
+    const tx = getTx()
+    getDb().prepare('UPDATE transactions SET is_removed = 1 WHERE id = ?').run(tx.id)
+
+    const res = await request(app).patch(`/api/transactions/${tx.id}`).send({
+      date: '2026-01-15',
+      payee: 'Test',
+      amount: tx.amount,
+    })
+    expect(res.status).toBe(404)
+  })
+
+  test('Plaid-synced transactions (is_manual=0) are editable', async () => {
+    const tx = getTx()
+    const catId = getCategoryId('Groceries')
+    addSplit(tx.id, catId, tx.amount)
+    getDb().prepare('UPDATE transactions SET is_manual = 0 WHERE id = ?').run(tx.id)
+
+    const res = await request(app).patch(`/api/transactions/${tx.id}`).send({
+      date: '2026-01-15',
+      payee: 'Plaid Payee Updated',
+      amount: tx.amount,
+    })
+    expect(res.status).toBe(200)
+  })
+
+  test('returns 400 when required fields are missing', async () => {
+    const tx = getTx()
+    const res = await request(app).patch(`/api/transactions/${tx.id}`).send({
+      payee: 'Missing date and amount',
+    })
+    expect(res.status).toBe(400)
   })
 })
