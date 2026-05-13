@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import { getDb } from '../db'
 import { plaidRouter } from './plaid'
+import { accountsRouter } from './accounts'
+import { categoriesRouter } from './categories'
 
 export const router = Router()
 
@@ -11,3 +13,5 @@ router.get('/health', (_req, res) => {
 })
 
 router.use('/plaid', plaidRouter)
+router.use('/accounts', accountsRouter)
+router.use('/categories', categoriesRouter)
