@@ -398,6 +398,8 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
   )
 }
 
+const INITIAL_TX_LIMIT = 5  // restore to 500 before PR
+
 export default function Register() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -405,13 +407,11 @@ export default function Register() {
   const [total, setTotal] = useState(0)
   const [selectedAccount, setSelectedAccount] = useState<number | ''>('')
   const [selectedCategory, setSelectedCategory] = useState<number | ''>('')
-  const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null)
   const [showEntryForm, setShowEntryForm] = useState(false)
   const [showCategoryPanel, setShowCategoryPanel] = useState(false)
-  const limit = 50
 
   useEffect(() => {
     Promise.all([
@@ -429,8 +429,8 @@ export default function Register() {
     const params = new URLSearchParams()
     if (selectedAccount !== '') params.set('account_id', String(selectedAccount))
     if (selectedCategory !== '') params.set('category_id', String(selectedCategory))
-    params.set('limit', String(limit))
-    params.set('offset', String(offset))
+    params.set('limit', String(INITIAL_TX_LIMIT))
+    params.set('offset', '0')
     setLoading(true)
     fetch(`/api/transactions?${params}`, { signal })
       .then(r => { if (!r.ok) throw new Error(`transactions: HTTP ${r.status}`); return r.json() })
@@ -443,10 +443,6 @@ export default function Register() {
         if ((err as Error).name !== 'AbortError') setError(String(err))
       })
       .finally(() => setLoading(false))
-  }, [selectedAccount, selectedCategory, offset])
-
-  useEffect(() => {
-    setOffset(0)
   }, [selectedAccount, selectedCategory])
 
   useEffect(() => {
@@ -661,28 +657,7 @@ export default function Register() {
         />
       )}
 
-      {/* Pagination */}
-      {total > limit && (
-        <div className="mt-4 flex gap-2 justify-center">
-          <button
-            disabled={offset === 0}
-            onClick={() => setOffset(Math.max(0, offset - limit))}
-            className="px-3 py-1 text-sm border rounded disabled:opacity-40"
-          >
-            ← Prev
-          </button>
-          <span className="text-sm text-gray-500 self-center">
-            {offset + 1}–{Math.min(offset + limit, total)} of {total}
-          </span>
-          <button
-            disabled={offset + limit >= total}
-            onClick={() => setOffset(offset + limit)}
-            className="px-3 py-1 text-sm border rounded disabled:opacity-40"
-          >
-            Next →
-          </button>
-        </div>
-      )}
+
     </div>
   )
 }
