@@ -31,8 +31,10 @@ export default function TransactionEditor({ tx, onSaved, onCancel }: Transaction
   const splitSum = tx.splits.reduce((s, sp) => s + sp.amount, 0)
   const remainder = parseFloat((parsedAmount - splitSum).toFixed(2))
 
+  const hasSplits = tx.splits.length > 0
+
   async function save() {
-    if (Math.abs(remainder) > 0.001) { setError('Update splits before changing amount'); return }
+    if (hasSplits && Math.abs(remainder) > 0.001) { setError('Update splits before changing amount'); return }
     setSaving(true)
     setError('')
     try {
@@ -99,7 +101,7 @@ export default function TransactionEditor({ tx, onSaved, onCancel }: Transaction
           />
         </div>
       </div>
-      {Math.abs(remainder) > 0.001 && (
+      {hasSplits && Math.abs(remainder) > 0.001 && (
         <div className={`text-xs font-mono mb-2 ${remainder < 0 ? 'text-red-500' : 'text-amber-600'}`}>
           Remaining: {remainder > 0 ? '+' : ''}{remainder.toFixed(2)} — update splits before changing amount
         </div>
@@ -113,7 +115,7 @@ export default function TransactionEditor({ tx, onSaved, onCancel }: Transaction
         </button>
         <button
           onClick={save}
-          disabled={saving || Math.abs(remainder) > 0.001}
+          disabled={saving || (hasSplits && Math.abs(remainder) > 0.001)}
           className="text-sm px-3 py-1 bg-indigo-600 text-white rounded disabled:opacity-40"
         >
           {saving ? 'Saving…' : 'Save'}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, Fragment } from 'react'
+import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import CategoryPicker from './CategoryPicker'
 import CategoryPanel from './CategoryPanel'
 import TransactionEditor from './TransactionEditor'
@@ -415,6 +415,14 @@ export default function Register() {
   const [showEntryForm, setShowEntryForm] = useState(false)
   const [showCategoryPanel, setShowCategoryPanel] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const savedScrollY = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!loading && savedScrollY.current !== null) {
+      window.scrollTo(0, savedScrollY.current)
+      savedScrollY.current = null
+    }
+  }, [loading])
 
   useEffect(() => {
     Promise.all([
@@ -630,7 +638,7 @@ export default function Register() {
                     <td colSpan={7} className="px-4 pb-3">
                       <TransactionEditor
                         tx={tx}
-                        onSaved={() => { loadTransactions(); setEditingTxId(null) }}
+                        onSaved={() => { savedScrollY.current = window.scrollY; loadTransactions(); setEditingTxId(null) }}
                         onCancel={() => setEditingTxId(null)}
                       />
                     </td>

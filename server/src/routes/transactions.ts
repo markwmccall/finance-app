@@ -266,9 +266,9 @@ transactionsRouter.patch('/:id', (req: Request, res: Response) => {
     }
 
     const splitRow = db.prepare(
-      'SELECT COALESCE(SUM(amount), 0) as total FROM transaction_splits WHERE transaction_id = ?'
-    ).get(id) as { total: number }
-    if (Math.abs(splitRow.total - amount) > 0.001) {
+      'SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total FROM transaction_splits WHERE transaction_id = ?'
+    ).get(id) as { count: number; total: number }
+    if (splitRow.count > 0 && Math.abs(splitRow.total - amount) > 0.001) {
       res.status(400).json({ error: 'Split amounts must sum to transaction amount' })
       return
     }
