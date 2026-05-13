@@ -4,7 +4,7 @@ import cors from 'cors'
 import path from 'path'
 import { router } from './routes'
 import { createDb } from './db'
-import { createTables, seedCategories, seedTestData } from './schema'
+import { createTables, seedCategories, seedTestData, migrateSchema } from './schema'
 
 const app = express()
 
@@ -39,6 +39,7 @@ if (process.env.NODE_ENV === 'production') {
 if (require.main === module) {
   const db = createDb()
   createTables(db)
+  migrateSchema(db)
   seedCategories(db)
   seedTestData(db)
   const PORT = process.env.PORT ?? 3001

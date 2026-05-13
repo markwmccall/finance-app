@@ -1,5 +1,5 @@
 import { createDb, getDb, closeDb } from '../db'
-import { createTables, seedCategories, seedTestData } from '../schema'
+import { createTables, seedCategories, seedTestData, migrateSchema } from '../schema'
 
 beforeEach(() => {
   createDb(':memory:')
@@ -128,4 +128,43 @@ test('seedTestData is idempotent', () => {
   seedTestData(db)
   const count = (db.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n
   expect(count).toBe(2)
+})
+
+test('transactions table has check_number column', () => {
+  const db = getDb()
+  const cols = db.prepare('PRAGMA table_info(transactions)').all() as Array<{ name: string }>
+  expect(cols.map(c => c.name)).toContain('check_number')
+})
+
+test('migrateSchema adds check_number when column is missing', () => {
+  const db = getDb()
+  // Simulate an old database that lacks check_number
+  db.exec('DROP TABLE IF EXISTS transaction_splits')
+  db.exec('DROP TABLE IF EXISTS transactions')
+  db.exec(`
+    CREATE TABLE transactions (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id            INTEGER NOT NULL,
+      plaid_transaction_id  TEXT    UNIQUE,
+      date                  TEXT    NOT NULL,
+      payee                 TEXT    NOT NULL,
+      amount                REAL    NOT NULL,
+      is_cleared            INTEGER NOT NULL DEFAULT 0,
+      is_manual             INTEGER NOT NULL DEFAULT 0,
+      is_removed            INTEGER NOT NULL DEFAULT 0
+    )
+  `)
+  const before = db.prepare('PRAGMA table_info(transactions)').all() as Array<{ name: string }>
+  expect(before.map(c => c.name)).not.toContain('check_number')
+
+  migrateSchema(db)
+
+  const after = db.prepare('PRAGMA table_info(transactions)').all() as Array<{ name: string }>
+  expect(after.map(c => c.name)).toContain('check_number')
+})
+
+test('migrateSchema is idempotent — running twice does not error', () => {
+  const db = getDb()
+  expect(() => migrateSchema(db)).not.toThrow()
+  expect(() => migrateSchema(db)).not.toThrow()
 })

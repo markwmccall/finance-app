@@ -33,6 +33,7 @@ export function createTables(db: Database.Database): void {
       date                  TEXT    NOT NULL,
       payee                 TEXT    NOT NULL,
       amount                REAL    NOT NULL,
+      check_number          TEXT,
       is_cleared            INTEGER NOT NULL DEFAULT 0,
       is_manual             INTEGER NOT NULL DEFAULT 0,
       is_removed            INTEGER NOT NULL DEFAULT 0
@@ -186,4 +187,11 @@ export function seedTestData(db: Database.Database): void {
     `INSERT INTO scheduled_transactions (account_id, payee, amount, frequency, next_due_date, is_active)
      VALUES (?, ?, ?, ?, ?, 1)`
   ).run(checkingId, 'Payroll', 3200.00, 'every two weeks', twoWeeksOutStr)
+}
+
+export function migrateSchema(db: Database.Database): void {
+  const cols = db.prepare('PRAGMA table_info(transactions)').all() as Array<{ name: string }>
+  if (!cols.some(c => c.name === 'check_number')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN check_number TEXT')
+  }
 }

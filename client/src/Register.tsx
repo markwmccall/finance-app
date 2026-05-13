@@ -33,6 +33,7 @@ interface Transaction {
   account_name: string
   date: string
   payee: string
+  check_number: string | null
   amount: number
   is_cleared: 0 | 1
   is_manual: 0 | 1
@@ -208,6 +209,7 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
   const [payee, setPayee] = useState('')
   const [accountId, setAccountId] = useState<number | ''>(accounts[0]?.id ?? '')
   const [amount, setAmount] = useState('')
+  const [checkNumber, setCheckNumber] = useState('')
   const [drafts, setDrafts] = useState<SplitDraft[]>([
     { category_id: uncategorized?.id ?? null, amount: '' },
   ])
@@ -254,6 +256,7 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
           date,
           payee: payee.trim(),
           amount: parsedAmount,
+          check_number: checkNumber.trim() || null,
           splits: drafts.map(d => ({
             category_id: d.category_id,
             amount: parseFloat(d.amount),
@@ -274,7 +277,7 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
   return (
     <form onSubmit={submit} className="mb-4 p-4 border rounded bg-white shadow-sm">
       <h3 className="font-semibold text-sm mb-3">New Transaction</h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
         <div>
           <label className="text-xs text-gray-500 block mb-1">Date</label>
           <input
@@ -317,6 +320,16 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
             }}
             placeholder="-50.00"
             className="w-full border rounded px-2 py-1 text-sm font-mono text-right"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Check #</label>
+          <input
+            type="text"
+            value={checkNumber}
+            onChange={e => setCheckNumber(e.target.value)}
+            placeholder="Optional"
+            className="w-full border rounded px-2 py-1 text-sm"
           />
         </div>
       </div>
@@ -545,7 +558,12 @@ export default function Register() {
               <Fragment key={tx.id}>
                 <tr className="border-b hover:bg-gray-50">
                   <td className="py-2 pr-4 text-gray-600">{tx.date}</td>
-                  <td className="py-2 pr-4 font-medium">{tx.payee}</td>
+                  <td className="py-2 pr-4 font-medium">
+                    {tx.payee}
+                    {tx.check_number && (
+                      <span className="text-gray-400 text-xs ml-1">· Check #{tx.check_number}</span>
+                    )}
+                  </td>
                   <td
                     className="py-2 pr-4 text-gray-600 cursor-pointer hover:text-indigo-600"
                     onClick={() => setExpandedTxId(prev => prev === tx.id ? null : tx.id)}
@@ -598,7 +616,12 @@ export default function Register() {
               onClick={() => setExpandedTxId(prev => prev === tx.id ? null : tx.id)}
             >
               <div className="flex-1 min-w-0">
-                <div className="font-medium truncate">{tx.payee}</div>
+                <div className="font-medium truncate">
+                  {tx.payee}
+                  {tx.check_number && (
+                    <span className="text-gray-400 text-xs ml-1">· Check #{tx.check_number}</span>
+                  )}
+                </div>
                 <div className="text-xs text-gray-500">{tx.date} · {fmtBalance(tx.running_balance)}</div>
                 <div className="text-xs text-gray-400 mt-0.5">{categoryLabel(tx)}</div>
               </div>

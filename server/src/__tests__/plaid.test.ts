@@ -277,6 +277,69 @@ describe('POST /api/plaid/sync', () => {
     const item = db.prepare('SELECT status FROM plaid_items WHERE id = 10').get() as any
     expect(item.status).toBe('needs_reauth')
   })
+
+  test('stores check_number from Plaid transaction', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({
+      data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] },
+    })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: {
+        added: [{
+          transaction_id: 'tx-check',
+          account_id: 'acct-aaa',
+          date: '2026-05-01',
+          name: 'Electric Company',
+          merchant_name: null,
+          check_number: '1247',
+          amount: 145.00,
+          pending: false,
+        }],
+        modified: [],
+        removed: [],
+        has_more: false,
+        next_cursor: 'cursor-x',
+      },
+    })
+
+    await request(app).post('/api/plaid/sync').send({})
+
+    const tx = getDb()
+      .prepare("SELECT check_number FROM transactions WHERE plaid_transaction_id = 'tx-check'")
+      .get() as { check_number: string | null } | undefined
+    expect(tx?.check_number).toBe('1247')
+  })
+
+  test('stores null check_number when Plaid transaction has none', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({
+      data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] },
+    })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: {
+        added: [{
+          transaction_id: 'tx-nocheck',
+          account_id: 'acct-aaa',
+          date: '2026-05-01',
+          name: 'Starbucks',
+          merchant_name: 'Starbucks',
+          amount: 5.50,
+          pending: false,
+        }],
+        modified: [],
+        removed: [],
+        has_more: false,
+        next_cursor: 'cursor-y',
+      },
+    })
+
+    await request(app).post('/api/plaid/sync').send({})
+
+    const tx = getDb()
+      .prepare("SELECT check_number FROM transactions WHERE plaid_transaction_id = 'tx-nocheck'")
+      .get() as { check_number: string | null } | undefined
+    expect(tx?.check_number).toBeNull()
+  })
 })
 
 describe('GET /api/plaid/status', () => {
