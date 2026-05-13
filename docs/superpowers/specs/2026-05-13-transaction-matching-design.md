@@ -16,13 +16,38 @@ Runs on the server during sync, before any transaction is inserted.
 
 ### Primary key: `check_number` (exact match)
 - If the incoming Plaid transaction has a `check_number` and an existing manual transaction on the same account has the same `check_number` → **auto-matched** (high confidence, no user review required).
+- Payee similarity is not required for check_number matches.
 
-### Fallback key: amount + date proximity
-- Exact amount match (within 0.001) AND date within ±1 calendar day → **needs review** (lower confidence, user decides).
+### Fallback key: amount + date + payee similarity
+- Exact amount match (within 0.001) AND date within ±1 calendar day AND payee similarity ≥ 0.5 → **needs review** (user decides).
 - Only considers manual transactions (`is_manual = 1`) that do not already have a `plaid_transaction_id`.
+- If multiple candidates pass the threshold, pick the one with the highest similarity score.
+- `match_confidence` (0–1) is stored on the queue row and shown in the UI as a hint.
+
+### Payee normalization
+Both payee strings are normalized before comparison:
+1. Lowercase
+2. Strip trailing merchant codes: `#0412`, `* `, `*`, ` - `, check numbers (`check #1042`, `chk 1042`)
+3. Strip common noise suffixes: card-present markers, store numbers (any sequence of digits ≥ 3 at the end)
+4. Collapse multiple spaces; trim
+
+Examples: `"KROGER #0412"` → `"kroger"`, `"AT&T *DIRECT"` → `"at&t"`, `"Target Run"` → `"target run"`.
+
+### Payee similarity algorithm
+Uses **Jaro-Winkler** on the normalized strings (via the `jaro-winkler` npm package on the server — pure JS, no native dependencies). Jaro-Winkler is well-suited for short strings and gives bonus weight to matching prefixes, which handles common patterns like `"at&t"` vs `"at&t bill pay"`.
+
+Threshold summary:
+| Score | Meaning | Outcome |
+|---|---|---|
+| ≥ 0.92 | Very likely same payee | `needs_review`, shown as "strong match" |
+| 0.70 – 0.91 | Probably same payee | `needs_review`, shown as "likely match" |
+| 0.50 – 0.69 | Possible same payee | `needs_review`, shown as "possible match" |
+| < 0.50 | Unlikely same payee | Not matched; treated as `new` |
+
+The `MATCH_CONFIDENCE_THRESHOLD` constant (default `0.50`) is defined in the matching module so it can be tuned without touching logic.
 
 ### No match
-- No candidate found → **new** (will be added to register on acceptance).
+- No candidate passes amount + date + payee threshold → **new** (will be added to register on acceptance).
 
 ---
 
@@ -41,13 +66,15 @@ CREATE TABLE IF NOT EXISTS sync_review_queue (
   plaid_check_number   TEXT,
   match_transaction_id INTEGER REFERENCES transactions(id),
   match_reason         TEXT,
+  match_confidence     REAL,
   status               TEXT    NOT NULL,
   created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 ```
 
 - `status`: `'auto_matched'` | `'needs_review'` | `'new'`
-- `match_reason`: `'check_number'` | `'amount_date'` | NULL (for `'new'` rows)
+- `match_reason`: `'check_number'` | `'amount_date_payee'` | NULL (for `'new'` rows)
+- `match_confidence`: Jaro-Winkler score (0–1) for `'amount_date_payee'` matches; NULL for `'check_number'` and `'new'` rows
 - `plaid_transaction_id` is UNIQUE — re-syncing the same Plaid transaction is a no-op (the existing queue row is left untouched).
 
 ### Modified sync behavior
@@ -75,7 +102,7 @@ Returns all rows grouped by account. Used by the dashboard widget and the review
       "account_id": 1,
       "account_name": "Truist Checking",
       "auto_matched": [ { "id": 1, "plaid_payee": "AT&T", "plaid_date": "2026-05-11", "plaid_amount": -125.00, "match_transaction_id": 42, "match_payee": "AT&T Bill Pay", "match_date": "2026-05-10", "match_reason": "check_number" } ],
-      "needs_review": [ { "id": 2, "plaid_payee": "Target", "plaid_date": "2026-05-08", "plaid_amount": -43.22, "match_transaction_id": 37, "match_payee": "Target Run", "match_date": "2026-05-07", "match_reason": "amount_date" } ],
+      "needs_review": [ { "id": 2, "plaid_payee": "Target", "plaid_date": "2026-05-08", "plaid_amount": -43.22, "match_transaction_id": 37, "match_payee": "Target Run", "match_date": "2026-05-07", "match_reason": "amount_date_payee", "match_confidence": 0.91 } ],
       "new": [ { "id": 3, "plaid_payee": "Whole Foods", "plaid_date": "2026-05-11", "plaid_amount": -84.12 } ]
     }
   ],
@@ -181,9 +208,13 @@ Only one item can be in "awaiting" state at a time.
 - `client/src/SyncBanner.tsx` — review banner component. Receives queue data for one account as props; emits `onQueueEmpty` callback when all items are processed.
 - `client/src/SyncWidget.tsx` — dashboard sync widget. Fetches queue summary; shows last-synced time, pending badge, and "Sync now" button.
 
+### New server dependency
+`jaro-winkler` npm package (pure JS, no native deps — safe for Pi Zero 2 W).
+
 ### Modified files
 - `server/src/schema.ts` — add `sync_review_queue` table definition; add `migrateSchema` entry for it.
 - `server/src/routes/sync.ts` — modify sync handler to use queue logic; add new queue endpoints.
+- `server/src/matching.ts` — new module: payee normalization, Jaro-Winkler scoring, match logic (extracted for testability).
 - `client/src/Register.tsx` — fetch queue for current account on load; render `<SyncBanner>` above the transaction list when queue rows exist.
 - `client/src/Dashboard.tsx` — render `<SyncWidget>`.
 - `client/src/Accounts.tsx` — add "Sync all" button; show per-account sync progress.
@@ -200,6 +231,7 @@ Only one item can be in "awaiting" state at a time.
 
 ## Testing
 
-- Unit tests for matching logic (check_number exact, amount+date fuzzy, no match).
+- Unit tests for payee normalization (strips merchant codes, digits, noise).
+- Unit tests for matching logic: check_number exact; amount+date+payee above/below threshold; multiple candidates (picks highest confidence); no match.
 - API tests: sync parks in queue; accept merges correctly; accept with `force_new` inserts new transaction; merge-with validates target; accept-all skips needs_review; reject removes row; undo-match demotes auto_matched to needs_review; re-sync of same plaid_transaction_id is idempotent.
 - Queue endpoint returns correct grouping and counts.
