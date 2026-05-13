@@ -161,6 +161,11 @@ transactionsRouter.post('/', (req: Request, res: Response) => {
       splits: SplitInput[]
     }
 
+    if (account_id === undefined || account_id === null || !date || !payee || amount === undefined || amount === null) {
+      res.status(400).json({ error: 'account_id, date, payee, and amount are required' })
+      return
+    }
+
     if (!splits || splits.length === 0) {
       res.status(400).json({ error: 'At least one split is required' })
       return
@@ -175,6 +180,15 @@ transactionsRouter.post('/', (req: Request, res: Response) => {
     const account = db.prepare('SELECT id FROM accounts WHERE id = ?').get(account_id)
     if (!account) {
       res.status(400).json({ error: 'Account not found' })
+      return
+    }
+
+    const validCatIds = new Set(
+      (db.prepare('SELECT id FROM categories WHERE is_active = 1').all() as { id: number }[]).map(c => c.id)
+    )
+    const invalidCat = splits.find((s: SplitInput) => !validCatIds.has(s.category_id))
+    if (invalidCat) {
+      res.status(400).json({ error: `Category id ${invalidCat.category_id} not found` })
       return
     }
 
@@ -247,6 +261,15 @@ transactionsRouter.put('/:id/splits', (req: Request, res: Response) => {
     const splitSum = splits.reduce((s: number, sp: SplitInput) => s + sp.amount, 0)
     if (Math.abs(splitSum - tx.amount) > 0.001) {
       res.status(400).json({ error: 'Split amounts must sum to transaction amount' })
+      return
+    }
+
+    const validCatIds = new Set(
+      (db.prepare('SELECT id FROM categories WHERE is_active = 1').all() as { id: number }[]).map(c => c.id)
+    )
+    const invalidCat = splits.find((s: SplitInput) => !validCatIds.has(s.category_id))
+    if (invalidCat) {
+      res.status(400).json({ error: `Category id ${invalidCat.category_id} not found` })
       return
     }
 

@@ -253,7 +253,9 @@ describe('PATCH /api/transactions/:id/cleared', () => {
     const tx = getDb().prepare(
       'SELECT id FROM transactions WHERE is_cleared = 1 LIMIT 1'
     ).get() as { id: number }
-    await request(app).patch(`/api/transactions/${tx.id}/cleared`)
+    const res = await request(app).patch(`/api/transactions/${tx.id}/cleared`)
+    expect(res.status).toBe(200)
+    expect(res.body.is_cleared).toBe(0)
     const updated = getDb().prepare(
       'SELECT is_cleared FROM transactions WHERE id = ?'
     ).get(tx.id) as { is_cleared: number }
