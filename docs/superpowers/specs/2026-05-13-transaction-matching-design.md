@@ -173,8 +173,15 @@ A "Sync all accounts" button at the top of the Accounts page triggers sync. Beca
 | Fetching transactions, page N>1 | scrolling | `Fetching transactions (page N)…` |
 | Writing to queue | scrolling | `Processing…` |
 | Done | solid/filled | `Done — 9 new · 1 review needed` |
-| Error | red | `Error — tap to retry` |
+| Error | red | `Error — RATE_LIMIT_EXCEEDED ▸ details` |
 | Needs re-auth | yellow | `Re-auth required` |
+
+Clicking "▸ details" on an error row expands an inline detail panel showing:
+- **Error code:** `RATE_LIMIT_EXCEEDED`
+- **Message:** `Too many requests in a short period.`
+- **Plaid request ID:** `abc123xyz` *(for Plaid support)*
+
+The request ID is displayed in a monospace copyable field so Mark can provide it to Plaid support if needed. A "Retry" button re-triggers sync for that institution only.
 
 Accounts that finish early show a "Review →" button immediately — Laurie doesn't need to wait for all institutions.
 
@@ -247,8 +254,12 @@ The current `POST /api/plaid/sync` returns a single response after all instituti
   data: {"item_id": 1, "state": "processing"}
   data: {"item_id": 1, "state": "done", "added": 9, "needs_review": 1, "auto_matched": 2}
   data: {"item_id": 2, "state": "done", "added": 3, "needs_review": 0, "auto_matched": 0}
+  data: {"item_id": 3, "state": "error", "error_code": "RATE_LIMIT_EXCEEDED", "error_message": "Too many requests in a short period.", "request_id": "abc123xyz"}
+  data: {"item_id": 4, "state": "needs_reauth"}
   data: {"type": "complete"}
   ```
+- `error_code`, `error_message`, and `request_id` are already captured in the existing sync error handler — they are currently logged to the console only. This spec threads them through to the client.
+- `request_id` is a Plaid-generated identifier; Plaid support can look it up on their end to diagnose the exact failed API call.
 - Client maps `item_id` to institution name and updates the row label in real time
 - On `{"type": "complete"}`, the client fetches `GET /api/sync/queue` to load the review banner data
 
