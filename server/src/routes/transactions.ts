@@ -144,3 +144,125 @@ transactionsRouter.get('/', (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch transactions' })
   }
 })
+
+interface SplitInput {
+  category_id: number
+  amount: number
+}
+
+transactionsRouter.post('/', (req: Request, res: Response) => {
+  try {
+    const db = getDb()
+    const { account_id, date, payee, amount, splits } = req.body as {
+      account_id: number
+      date: string
+      payee: string
+      amount: number
+      splits: SplitInput[]
+    }
+
+    if (!splits || splits.length === 0) {
+      res.status(400).json({ error: 'At least one split is required' })
+      return
+    }
+
+    const splitSum = splits.reduce((s: number, sp: SplitInput) => s + sp.amount, 0)
+    if (Math.abs(splitSum - amount) > 0.001) {
+      res.status(400).json({ error: 'Split amounts must sum to transaction amount' })
+      return
+    }
+
+    const account = db.prepare('SELECT id FROM accounts WHERE id = ?').get(account_id)
+    if (!account) {
+      res.status(400).json({ error: 'Account not found' })
+      return
+    }
+
+    const insertTx = db.prepare(
+      'INSERT INTO transactions (account_id, date, payee, amount, is_cleared, is_manual) VALUES (?, ?, ?, ?, 0, 1)'
+    )
+    const insertSplit = db.prepare(
+      'INSERT INTO transaction_splits (transaction_id, category_id, amount) VALUES (?, ?, ?)'
+    )
+    const updateBalance = db.prepare(
+      'UPDATE accounts SET current_balance = current_balance + ? WHERE id = ?'
+    )
+
+    const txId = db.transaction(() => {
+      const result = insertTx.run(account_id, date, payee, amount)
+      const id = result.lastInsertRowid as number
+      for (const split of splits) {
+        insertSplit.run(id, split.category_id, split.amount)
+      }
+      updateBalance.run(amount, account_id)
+      return id
+    })()
+
+    res.status(201).json({ id: txId })
+  } catch (err) {
+    console.error('POST /api/transactions error:', err)
+    res.status(500).json({ error: 'Failed to create transaction' })
+  }
+})
+
+transactionsRouter.patch('/:id/cleared', (req: Request, res: Response) => {
+  try {
+    const db = getDb()
+    const id = Number(req.params.id)
+    const tx = db.prepare(
+      'SELECT id, is_cleared FROM transactions WHERE id = ? AND is_removed = 0'
+    ).get(id) as { id: number; is_cleared: number } | undefined
+    if (!tx) {
+      res.status(404).json({ error: 'Transaction not found' })
+      return
+    }
+    const newCleared = tx.is_cleared === 0 ? 1 : 0
+    db.prepare('UPDATE transactions SET is_cleared = ? WHERE id = ?').run(newCleared, id)
+    res.json({ id, is_cleared: newCleared })
+  } catch (err) {
+    console.error('PATCH /api/transactions/:id/cleared error:', err)
+    res.status(500).json({ error: 'Failed to update transaction' })
+  }
+})
+
+transactionsRouter.put('/:id/splits', (req: Request, res: Response) => {
+  try {
+    const db = getDb()
+    const id = Number(req.params.id)
+    const { splits } = req.body as { splits: SplitInput[] }
+
+    const tx = db.prepare(
+      'SELECT id, amount FROM transactions WHERE id = ? AND is_removed = 0'
+    ).get(id) as { id: number; amount: number } | undefined
+    if (!tx) {
+      res.status(404).json({ error: 'Transaction not found' })
+      return
+    }
+
+    if (!splits || splits.length === 0) {
+      res.status(400).json({ error: 'At least one split is required' })
+      return
+    }
+
+    const splitSum = splits.reduce((s: number, sp: SplitInput) => s + sp.amount, 0)
+    if (Math.abs(splitSum - tx.amount) > 0.001) {
+      res.status(400).json({ error: 'Split amounts must sum to transaction amount' })
+      return
+    }
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM transaction_splits WHERE transaction_id = ?').run(id)
+      const insertSplit = db.prepare(
+        'INSERT INTO transaction_splits (transaction_id, category_id, amount) VALUES (?, ?, ?)'
+      )
+      for (const split of splits) {
+        insertSplit.run(id, split.category_id, split.amount)
+      }
+    })()
+
+    res.json({ id })
+  } catch (err) {
+    console.error('PUT /api/transactions/:id/splits error:', err)
+    res.status(500).json({ error: 'Failed to update splits' })
+  }
+})

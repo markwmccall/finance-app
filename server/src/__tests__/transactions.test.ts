@@ -141,3 +141,169 @@ describe('GET /api/transactions', () => {
     expect(res.body.total).toBe(9)
   })
 })
+
+describe('POST /api/transactions', () => {
+  test('creates a manual transaction with a single split', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'Whole Foods',
+      amount: -62.50,
+      splits: [{ category_id: catId, amount: -62.50 }],
+    })
+    expect(res.status).toBe(201)
+    expect(res.body.id).toBeDefined()
+    const tx = getDb().prepare('SELECT * FROM transactions WHERE id = ?').get(res.body.id) as {
+      is_manual: number; payee: string
+    }
+    expect(tx.is_manual).toBe(1)
+    expect(tx.payee).toBe('Whole Foods')
+  })
+
+  test('creates splits for the transaction', async () => {
+    const grocId = getCategoryId('Groceries')
+    const diningId = getCategoryId('Dining Out')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'Split Purchase',
+      amount: -100,
+      splits: [
+        { category_id: grocId, amount: -60 },
+        { category_id: diningId, amount: -40 },
+      ],
+    })
+    expect(res.status).toBe(201)
+    const splits = getDb().prepare(
+      'SELECT * FROM transaction_splits WHERE transaction_id = ?'
+    ).all(res.body.id)
+    expect(splits.length).toBe(2)
+  })
+
+  test('updates account current_balance', async () => {
+    const catId = getCategoryId('Groceries')
+    const before = (
+      getDb().prepare('SELECT current_balance FROM accounts WHERE id = 1').get() as { current_balance: number }
+    ).current_balance
+    await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'Test',
+      amount: -50,
+      splits: [{ category_id: catId, amount: -50 }],
+    })
+    const after = (
+      getDb().prepare('SELECT current_balance FROM accounts WHERE id = 1').get() as { current_balance: number }
+    ).current_balance
+    expect(after).toBeCloseTo(before - 50, 2)
+  })
+
+  test('returns 400 when splits do not sum to transaction amount', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'Bad Split',
+      amount: -100,
+      splits: [{ category_id: catId, amount: -60 }],
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('returns 400 when splits array is empty', async () => {
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'No Splits',
+      amount: -50,
+      splits: [],
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('returns 400 when account_id does not exist', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 9999,
+      date: '2026-05-10',
+      payee: 'Ghost Account',
+      amount: -50,
+      splits: [{ category_id: catId, amount: -50 }],
+    })
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('PATCH /api/transactions/:id/cleared', () => {
+  test('toggles is_cleared from 0 to 1', async () => {
+    const tx = getDb().prepare(
+      'SELECT id, is_cleared FROM transactions WHERE is_cleared = 0 LIMIT 1'
+    ).get() as { id: number; is_cleared: number }
+    const res = await request(app).patch(`/api/transactions/${tx.id}/cleared`)
+    expect(res.status).toBe(200)
+    expect(res.body.is_cleared).toBe(1)
+    const updated = getDb().prepare(
+      'SELECT is_cleared FROM transactions WHERE id = ?'
+    ).get(tx.id) as { is_cleared: number }
+    expect(updated.is_cleared).toBe(1)
+  })
+
+  test('toggles is_cleared from 1 to 0', async () => {
+    const tx = getDb().prepare(
+      'SELECT id FROM transactions WHERE is_cleared = 1 LIMIT 1'
+    ).get() as { id: number }
+    await request(app).patch(`/api/transactions/${tx.id}/cleared`)
+    const updated = getDb().prepare(
+      'SELECT is_cleared FROM transactions WHERE id = ?'
+    ).get(tx.id) as { is_cleared: number }
+    expect(updated.is_cleared).toBe(0)
+  })
+
+  test('returns 404 for unknown transaction id', async () => {
+    const res = await request(app).patch('/api/transactions/9999/cleared')
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('PUT /api/transactions/:id/splits', () => {
+  test('replaces splits for a transaction', async () => {
+    const db = getDb()
+    const txRow = db.prepare(
+      'SELECT id, amount FROM transactions LIMIT 1'
+    ).get() as { id: number; amount: number }
+    const grocId = getCategoryId('Groceries')
+    addSplit(txRow.id, grocId, txRow.amount)
+
+    const diningId = getCategoryId('Dining Out')
+    const res = await request(app).put(`/api/transactions/${txRow.id}/splits`).send({
+      splits: [{ category_id: diningId, amount: txRow.amount }],
+    })
+    expect(res.status).toBe(200)
+
+    const splits = db.prepare(
+      'SELECT * FROM transaction_splits WHERE transaction_id = ?'
+    ).all(txRow.id)
+    expect(splits.length).toBe(1)
+    expect((splits[0] as { category_id: number }).category_id).toBe(diningId)
+  })
+
+  test('returns 400 when new splits do not sum to transaction amount', async () => {
+    const txRow = getDb().prepare(
+      'SELECT id, amount FROM transactions LIMIT 1'
+    ).get() as { id: number; amount: number }
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).put(`/api/transactions/${txRow.id}/splits`).send({
+      splits: [{ category_id: catId, amount: txRow.amount + 10 }],
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('returns 404 for unknown transaction id', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).put('/api/transactions/9999/splits').send({
+      splits: [{ category_id: catId, amount: -50 }],
+    })
+    expect(res.status).toBe(404)
+  })
+})
