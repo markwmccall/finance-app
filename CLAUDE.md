@@ -65,6 +65,14 @@ Implement in this sequence — do not skip ahead:
 
 ---
 
+## Branching
+
+- **Never commit to `main` directly.** All work happens on a feature branch.
+- Branch naming: `phase/01c-register`, `fix/transaction-matching`, etc.
+- Workflow: create branch → implement → push → open PR → merge to main from PR.
+
+---
+
 ## Code Style
 
 - TypeScript throughout — no `any` unless absolutely necessary
