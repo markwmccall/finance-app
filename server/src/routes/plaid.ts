@@ -137,7 +137,7 @@ plaidRouter.post('/sync', async (_req, res) => {
       const plaidAccounts = accountsRes.data.accounts
 
       // Step 2: Cursor loop — accumulate all pages
-      type PlaidTx = { transaction_id: string; account_id: string; date: string; name: string; merchant_name?: string | null; amount: number; pending: boolean }
+      type PlaidTx = { transaction_id: string; account_id: string; date: string; name: string; merchant_name?: string | null; check_number?: string | null; amount: number; pending: boolean }
       type RemovedTx = { transaction_id: string }
       const added: PlaidTx[] = []
       const modified: PlaidTx[] = []
@@ -166,12 +166,13 @@ plaidRouter.post('/sync', async (_req, res) => {
 
       // Step 4: Single DB transaction — all writes or nothing
       const upsertTx = db.prepare(`
-        INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount, is_cleared)
-        VALUES (@account_id, @plaid_transaction_id, @date, @payee, @amount, @is_cleared)
+        INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount, check_number, is_cleared)
+        VALUES (@account_id, @plaid_transaction_id, @date, @payee, @amount, @check_number, @is_cleared)
         ON CONFLICT(plaid_transaction_id) DO UPDATE SET
           date = excluded.date,
           payee = excluded.payee,
           amount = excluded.amount,
+          check_number = excluded.check_number,
           is_cleared = excluded.is_cleared,
           is_removed = 0
       `)
@@ -198,6 +199,7 @@ plaidRouter.post('/sync', async (_req, res) => {
             date: tx.date,
             payee: tx.merchant_name ?? tx.name,
             amount: -(tx.amount),  // negate: Plaid positive=debit, we store negative=debit
+            check_number: tx.check_number ?? null,
             is_cleared: tx.pending ? 0 : 1,
           })
         }
