@@ -398,7 +398,7 @@ function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntr
   )
 }
 
-const INITIAL_TX_LIMIT = 5  // restore to 500 before PR
+const INITIAL_TX_LIMIT = 500
 
 export default function Register() {
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -412,6 +412,7 @@ export default function Register() {
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null)
   const [showEntryForm, setShowEntryForm] = useState(false)
   const [showCategoryPanel, setShowCategoryPanel] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
     Promise.all([
@@ -461,6 +462,23 @@ export default function Register() {
       setTransactions(prev)
       setError(`Failed to update cleared status: HTTP ${res.status}`)
     }
+  }
+
+  function loadOlderTransactions() {
+    const params = new URLSearchParams()
+    if (selectedAccount !== '') params.set('account_id', String(selectedAccount))
+    if (selectedCategory !== '') params.set('category_id', String(selectedCategory))
+    params.set('offset', String(transactions.length))
+    params.set('limit', String(total - transactions.length))
+    setLoadingMore(true)
+    fetch(`/api/transactions?${params}`)
+      .then(r => { if (!r.ok) throw new Error(`transactions: HTTP ${r.status}`); return r.json() })
+      .then(data => {
+        setTransactions(prev => [...prev, ...data.transactions])
+        setError(null)
+      })
+      .catch(err => setError(String(err)))
+      .finally(() => setLoadingMore(false))
   }
 
   const parentCategories = categories.filter(c => c.parent_id === null && c.is_system === 0)
@@ -645,6 +663,18 @@ export default function Register() {
           </div>
         ))}
       </div>
+
+      {transactions.length > 0 && transactions.length < total && (
+        <div className="mt-4 text-center">
+          <button
+            onClick={loadOlderTransactions}
+            disabled={loadingMore}
+            className="text-sm text-indigo-600 hover:underline disabled:opacity-40"
+          >
+            {loadingMore ? 'Loading…' : `Load ${total - transactions.length} older transactions`}
+          </button>
+        </div>
+      )}
 
       {showCategoryPanel && (
         <CategoryPanel
