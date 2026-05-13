@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react'
 import CategoryPicker from './CategoryPicker'
 import CategoryPanel from './CategoryPanel'
+import TransactionEditor from './TransactionEditor'
 
 interface Account {
   id: number
@@ -410,6 +411,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null)
+  const [editingTxId, setEditingTxId] = useState<number | null>(null)
   const [showEntryForm, setShowEntryForm] = useState(false)
   const [showCategoryPanel, setShowCategoryPanel] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -561,16 +563,17 @@ export default function Register() {
               <th className="py-2 pr-4 font-medium text-right">Amount</th>
               <th className="py-2 pr-4 font-medium text-right">Balance</th>
               <th className="py-2 font-medium text-center">Cleared</th>
+              <th className="py-2 w-8"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Loading…</td></tr>
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400 text-sm">Loading…</td></tr>
             ) : transactions.length === 0 ? (
-              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">No transactions match these filters.</td></tr>
+              <tr><td colSpan={7} className="py-8 text-center text-gray-400 text-sm">No transactions match these filters.</td></tr>
             ) : transactions.map(tx => (
               <Fragment key={tx.id}>
-                <tr className="border-b hover:bg-gray-50">
+                <tr className="border-b hover:bg-gray-50 group">
                   <td className="py-2 pr-4 text-gray-600">{tx.date}</td>
                   <td className="py-2 pr-4 font-medium">
                     {tx.payee}
@@ -580,7 +583,7 @@ export default function Register() {
                   </td>
                   <td
                     className="py-2 pr-4 text-gray-600 cursor-pointer hover:text-indigo-600"
-                    onClick={() => setExpandedTxId(prev => prev === tx.id ? null : tx.id)}
+                    onClick={() => { setExpandedTxId(prev => prev === tx.id ? null : tx.id); setEditingTxId(null) }}
                   >
                     {categoryLabel(tx)}
                   </td>
@@ -599,14 +602,36 @@ export default function Register() {
                       {tx.is_cleared ? '✓' : ''}
                     </button>
                   </td>
+                  <td className="py-2 text-center">
+                    {editingTxId !== tx.id && (
+                      <button
+                        onClick={() => { setEditingTxId(tx.id); setExpandedTxId(null) }}
+                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-indigo-600 text-sm px-1"
+                        title="Edit transaction"
+                      >
+                        ✎
+                      </button>
+                    )}
+                  </td>
                 </tr>
                 {expandedTxId === tx.id && (
                   <tr>
-                    <td colSpan={6} className="px-4 pb-3">
+                    <td colSpan={7} className="px-4 pb-3">
                       <SplitEditor
                         tx={tx}
                         categories={categories}
                         onSaved={() => { loadTransactions(); setExpandedTxId(null) }}
+                      />
+                    </td>
+                  </tr>
+                )}
+                {editingTxId === tx.id && (
+                  <tr>
+                    <td colSpan={7} className="px-4 pb-3">
+                      <TransactionEditor
+                        tx={tx}
+                        onSaved={() => { loadTransactions(); setEditingTxId(null) }}
+                        onCancel={() => setEditingTxId(null)}
                       />
                     </td>
                   </tr>
@@ -627,7 +652,7 @@ export default function Register() {
           <div key={tx.id} className="bg-white rounded border">
             <div
               className="p-3 flex items-start gap-3 cursor-pointer"
-              onClick={() => setExpandedTxId(prev => prev === tx.id ? null : tx.id)}
+              onClick={() => { setExpandedTxId(prev => prev === tx.id ? null : tx.id); setEditingTxId(null) }}
             >
               <div className="flex-1 min-w-0">
                 <div className="font-medium truncate">
@@ -649,6 +674,13 @@ export default function Register() {
                 >
                   {tx.is_cleared ? '✓' : ''}
                 </button>
+                <button
+                  onClick={e => { e.stopPropagation(); setEditingTxId(prev => prev === tx.id ? null : tx.id); setExpandedTxId(null) }}
+                  className="text-gray-400 hover:text-indigo-600 text-sm px-1"
+                  title="Edit transaction"
+                >
+                  ✎
+                </button>
               </div>
             </div>
             {expandedTxId === tx.id && (
@@ -657,6 +689,15 @@ export default function Register() {
                   tx={tx}
                   categories={categories}
                   onSaved={() => { loadTransactions(); setExpandedTxId(null) }}
+                />
+              </div>
+            )}
+            {editingTxId === tx.id && (
+              <div className="px-3 pb-3 border-t">
+                <TransactionEditor
+                  tx={tx}
+                  onSaved={() => { loadTransactions(); setEditingTxId(null) }}
+                  onCancel={() => setEditingTxId(null)}
                 />
               </div>
             )}
