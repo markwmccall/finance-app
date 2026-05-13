@@ -79,11 +79,17 @@ CREATE TABLE IF NOT EXISTS sync_review_queue (
 
 ### Modified sync behavior
 
-Currently `POST /api/sync` upserts Plaid transactions directly into `transactions` via `ON CONFLICT(plaid_transaction_id) DO UPDATE SET`. After this change:
+Currently `POST /api/plaid/sync` iterates institutions sequentially with `for...of` and upserts Plaid transactions directly into `transactions`. After this change:
 
-1. For each incoming Plaid transaction, run matching logic against `transactions` (manual only, no `plaid_transaction_id`, not `is_removed`).
-2. Insert a row into `sync_review_queue` with the appropriate `status`. Use `INSERT OR IGNORE` so already-queued transactions from a prior partial sync are not overwritten.
+**Parallelism:** The loop is replaced with `Promise.allSettled()` — all institutions start syncing simultaneously. Each institution (Plaid Item) is independent: separate `access_token`, separate `cursor`, separate accounts. One failing institution does not abort the others. `Promise.allSettled()` (not `Promise.all()`) preserves this per-item error isolation. Cursor pagination within each item remains sequential, since each page depends on the previous cursor.
+
+**Queue instead of direct insert:** For each incoming Plaid transaction:
+
+1. Run matching logic against `transactions` (manual only, `is_manual = 1`, no `plaid_transaction_id`, not `is_removed`) for the same account.
+2. Insert a row into `sync_review_queue` with the appropriate `status`. Use `INSERT OR IGNORE` — re-syncing the same `plaid_transaction_id` is a no-op; the existing queue row is preserved.
 3. Do **not** insert into `transactions` at this point. The transaction lands in the register only when the user accepts it.
+
+Matching queries filter by `account_id`, so parallel item processing carries no race risk.
 
 Transactions already in `transactions` with a matching `plaid_transaction_id` (from before this phase shipped) are left alone and not re-queued.
 
