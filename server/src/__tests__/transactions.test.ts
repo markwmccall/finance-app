@@ -140,6 +140,14 @@ describe('GET /api/transactions', () => {
     const res = await request(app).get('/api/transactions?account_id=1')
     expect(res.body.total).toBe(9)
   })
+
+  test('each transaction row includes check_number field', async () => {
+    const res = await request(app).get('/api/transactions?account_id=1')
+    expect(res.status).toBe(200)
+    const tx = res.body.transactions[0]
+    expect('check_number' in tx).toBe(true)
+    expect(tx.check_number).toBeNull()
+  })
 })
 
 describe('POST /api/transactions', () => {
@@ -232,6 +240,39 @@ describe('POST /api/transactions', () => {
       splits: [{ category_id: catId, amount: -50 }],
     })
     expect(res.status).toBe(400)
+  })
+
+  test('stores check_number when provided', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'AT&T',
+      amount: -125.00,
+      check_number: '1042',
+      splits: [{ category_id: catId, amount: -125.00 }],
+    })
+    expect(res.status).toBe(201)
+    const tx = getDb()
+      .prepare('SELECT check_number FROM transactions WHERE id = ?')
+      .get(res.body.id) as { check_number: string | null }
+    expect(tx.check_number).toBe('1042')
+  })
+
+  test('stores null check_number when omitted', async () => {
+    const catId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/transactions').send({
+      account_id: 1,
+      date: '2026-05-10',
+      payee: 'Kroger',
+      amount: -45.00,
+      splits: [{ category_id: catId, amount: -45.00 }],
+    })
+    expect(res.status).toBe(201)
+    const tx = getDb()
+      .prepare('SELECT check_number FROM transactions WHERE id = ?')
+      .get(res.body.id) as { check_number: string | null }
+    expect(tx.check_number).toBeNull()
   })
 })
 

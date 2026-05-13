@@ -16,6 +16,7 @@ interface TxRow {
   date: string
   payee: string
   amount: number
+  check_number: string | null
   is_cleared: number
   is_manual: number
 }
@@ -86,7 +87,7 @@ transactionsRouter.get('/', (req: Request, res: Response) => {
     const txRows = db.prepare(`
       SELECT t.id, t.account_id, a.name as account_name,
              t.plaid_transaction_id, t.date, t.payee, t.amount,
-             t.is_cleared, t.is_manual
+             t.check_number, t.is_cleared, t.is_manual
       FROM transactions t
       JOIN accounts a ON a.id = t.account_id
       WHERE t.is_removed = 0
@@ -153,12 +154,13 @@ interface SplitInput {
 transactionsRouter.post('/', (req: Request, res: Response) => {
   try {
     const db = getDb()
-    const { account_id, date, payee, amount, splits } = req.body as {
+    const { account_id, date, payee, amount, splits, check_number } = req.body as {
       account_id: number
       date: string
       payee: string
       amount: number
       splits: SplitInput[]
+      check_number?: string | null
     }
 
     if (account_id === undefined || account_id === null || !date || !payee || amount === undefined || amount === null) {
@@ -193,7 +195,7 @@ transactionsRouter.post('/', (req: Request, res: Response) => {
     }
 
     const insertTx = db.prepare(
-      'INSERT INTO transactions (account_id, date, payee, amount, is_cleared, is_manual) VALUES (?, ?, ?, ?, 0, 1)'
+      'INSERT INTO transactions (account_id, date, payee, amount, check_number, is_cleared, is_manual) VALUES (?, ?, ?, ?, ?, 0, 1)'
     )
     const insertSplit = db.prepare(
       'INSERT INTO transaction_splits (transaction_id, category_id, amount) VALUES (?, ?, ?)'
@@ -203,7 +205,7 @@ transactionsRouter.post('/', (req: Request, res: Response) => {
     )
 
     const txId = db.transaction(() => {
-      const result = insertTx.run(account_id, date, payee, amount)
+      const result = insertTx.run(account_id, date, payee, amount, check_number?.trim() || null)
       const id = result.lastInsertRowid as number
       for (const split of splits) {
         insertSplit.run(id, split.category_id, split.amount)
