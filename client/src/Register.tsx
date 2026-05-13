@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, Fragment } from 'react'
 import CategoryPicker from './CategoryPicker'
+import CategoryPanel from './CategoryPanel'
 
 interface Account {
   id: number
@@ -396,6 +397,7 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null)
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null)
   const [showEntryForm, setShowEntryForm] = useState(false)
+  const [showCategoryPanel, setShowCategoryPanel] = useState(false)
   const limit = 50
 
   useEffect(() => {
@@ -496,7 +498,7 @@ export default function Register() {
           <button
             className="p-1 rounded hover:bg-gray-100 text-gray-500"
             title="Manage categories"
-            onClick={() => {/* wired in Task 9 */}}
+            onClick={() => setShowCategoryPanel(true)}
           >
             ⚙
           </button>
@@ -624,6 +626,17 @@ export default function Register() {
           </div>
         ))}
       </div>
+
+      {showCategoryPanel && (
+        <CategoryPanel
+          categories={categories}
+          onClose={() => setShowCategoryPanel(false)}
+          onChanged={() => {
+            fetch('/api/categories').then(r => r.json()).then(setCategories)
+            loadTransactions()
+          }}
+        />
+      )}
 
       {/* Pagination */}
       {total > limit && (
