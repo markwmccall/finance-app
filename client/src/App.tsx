@@ -1,11 +1,9 @@
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import Accounts from './Accounts'
+import Register from './Register'
 
 function Dashboard() {
   return <div className="p-6"><h1 className="text-2xl font-bold">Dashboard</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
-}
-function Register() {
-  return <div className="p-6"><h1 className="text-2xl font-bold">Register</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
 }
 function Calendar() {
   return <div className="p-6"><h1 className="text-2xl font-bold">Calendar</h1><p className="text-gray-500 mt-2">Coming soon.</p></div>
