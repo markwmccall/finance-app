@@ -37,10 +37,10 @@ interface TxWithBalance extends TxRow {
 transactionsRouter.get('/', (req: Request, res: Response) => {
   try {
     const db = getDb()
-    const accountId = req.query.account_id ? Number(req.query.account_id) : null
+    const accountId = req.query.account_id !== undefined ? Number(req.query.account_id) : null
     const categoryId = req.query.category_id ? Number(req.query.category_id) : null
-    const limit = req.query.limit ? Number(req.query.limit) : 50
-    const offset = req.query.offset ? Number(req.query.offset) : 0
+    const limit = Math.max(1, Math.min(200, req.query.limit ? Number(req.query.limit) : 50))
+    const offset = Math.max(0, req.query.offset ? Number(req.query.offset) : 0)
 
     let accountIds: number[]
     if (accountId) {
@@ -59,15 +59,16 @@ transactionsRouter.get('/', (req: Request, res: Response) => {
     // Expand parent category to its children for filtering
     let categoryIds: number[] | null = null
     if (categoryId) {
-      const cat = db.prepare('SELECT id, parent_id FROM categories WHERE id = ?').get(categoryId) as {
+      const cat = db.prepare('SELECT id, parent_id, is_system FROM categories WHERE id = ?').get(categoryId) as {
         id: number
         parent_id: number | null
+        is_system: number
       } | undefined
       if (!cat) {
         res.json({ transactions: [], total: 0 })
         return
       }
-      if (cat.parent_id === null) {
+      if (cat.parent_id === null && !cat.is_system) {
         const children = db.prepare('SELECT id FROM categories WHERE parent_id = ?').all(categoryId) as { id: number }[]
         categoryIds = children.map(c => c.id)
       } else {

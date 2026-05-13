@@ -121,6 +121,18 @@ describe('GET /api/transactions', () => {
     expect(res1.body.total).toBe(10) // 10 transactions seeded for checking
   })
 
+  test('filters by Uncategorized category_id returns matching transactions', async () => {
+    const db = getDb()
+    const txRow = db.prepare('SELECT id, amount FROM transactions LIMIT 1').get() as { id: number; amount: number }
+    const uncatId = getCategoryId('Uncategorized')
+    addSplit(txRow.id, uncatId, txRow.amount)
+
+    const res = await request(app).get(`/api/transactions?account_id=1&category_id=${uncatId}`)
+    expect(res.status).toBe(200)
+    expect(res.body.transactions.length).toBe(1)
+    expect(res.body.transactions[0].id).toBe(txRow.id)
+  })
+
   test('excludes soft-deleted transactions', async () => {
     getDb().prepare(
       'UPDATE transactions SET is_removed = 1 WHERE id = (SELECT id FROM transactions LIMIT 1)'
