@@ -159,9 +159,24 @@ A "Bank Sync" widget on the Dashboard shows:
 Clicking "Sync now" navigates to the Accounts page and starts a sync.
 
 ### Accounts page
-A "Sync all accounts" button at the top of the Accounts page triggers sync. While syncing:
-- Each account row shows a progress state: **waiting** → **syncing…** (with a progress bar) → **done** (with result summary).
-- Accounts that finish early show a "Review →" button immediately — Laurie doesn't need to wait for all accounts.
+A "Sync all accounts" button at the top of the Accounts page triggers sync. Because institutions sync in parallel, all rows start animating simultaneously.
+
+**Progress display per institution (not per account):** Plaid's API is one request-set per institution (Item), not per account. Truist Checking and Truist Savings are both under the Truist Item — they finish at the same time. Progress rows are grouped by institution, with their accounts listed underneath.
+
+**No percentage bar** — Plaid does not report total pages in advance, so a 0–100% bar would be fabricated. Instead each institution row shows an **indeterminate animated bar** (CSS animation, no percentage) with a status label that updates through real state transitions:
+
+| State | Bar | Label |
+|---|---|---|
+| Not started | none | `waiting…` |
+| Fetching balances | scrolling | `Fetching balances…` |
+| Fetching transactions, page 1 | scrolling | `Fetching transactions…` |
+| Fetching transactions, page N>1 | scrolling | `Fetching transactions (page N)…` |
+| Writing to queue | scrolling | `Processing…` |
+| Done | solid/filled | `Done — 9 new · 1 review needed` |
+| Error | red | `Error — tap to retry` |
+| Needs re-auth | yellow | `Re-auth required` |
+
+Accounts that finish early show a "Review →" button immediately — Laurie doesn't need to wait for all institutions.
 
 If no accounts are connected, the button is disabled.
 
@@ -218,6 +233,26 @@ Only one item can be in "awaiting" state at a time.
 ### New files
 - `client/src/SyncBanner.tsx` — review banner component. Receives queue data for one account as props; emits `onQueueEmpty` callback when all items are processed.
 - `client/src/SyncWidget.tsx` — dashboard sync widget. Fetches queue summary; shows last-synced time, pending badge, and "Sync now" button.
+
+### Sync progress streaming
+
+The current `POST /api/plaid/sync` returns a single response after all institutions complete. To drive the live status labels on the Accounts page, the endpoint is changed to use **Server-Sent Events (SSE)**:
+
+- Client opens `POST /api/plaid/sync` with `Accept: text/event-stream`
+- Server emits one `data:` event per institution state change as it occurs:
+  ```
+  data: {"item_id": 1, "state": "fetching_balances"}
+  data: {"item_id": 1, "state": "fetching_transactions", "page": 1}
+  data: {"item_id": 1, "state": "fetching_transactions", "page": 2}
+  data: {"item_id": 1, "state": "processing"}
+  data: {"item_id": 1, "state": "done", "added": 9, "needs_review": 1, "auto_matched": 2}
+  data: {"item_id": 2, "state": "done", "added": 3, "needs_review": 0, "auto_matched": 0}
+  data: {"type": "complete"}
+  ```
+- Client maps `item_id` to institution name and updates the row label in real time
+- On `{"type": "complete"}`, the client fetches `GET /api/sync/queue` to load the review banner data
+
+SSE is the right fit here: the server needs to push multiple events over time, the client is read-only during sync, and SSE is simpler than WebSockets for a one-way stream.
 
 ### New server dependency
 `jaro-winkler` npm package (pure JS, no native deps — safe for Pi Zero 2 W).
