@@ -32,7 +32,7 @@ export default function TransactionEditor({ tx, onSaved, onCancel }: Transaction
   const remainder = parseFloat((parsedAmount - splitSum).toFixed(2))
 
   async function save() {
-    if (Math.abs(remainder) > 0.001) return
+    if (Math.abs(remainder) > 0.001) { setError('Update splits before changing amount'); return }
     setSaving(true)
     setError('')
     try {
