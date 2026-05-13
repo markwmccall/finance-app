@@ -12,8 +12,8 @@ interface Category {
   name: string
   parent_id: number | null
   parent_name: string | null
-  is_system: number
-  is_active: number
+  is_system: 0 | 1
+  is_active: 0 | 1
   sort_order: number
 }
 
@@ -32,8 +32,8 @@ interface Transaction {
   date: string
   payee: string
   amount: number
-  is_cleared: number
-  is_manual: number
+  is_cleared: 0 | 1
+  is_manual: 0 | 1
   splits: Split[]
   running_balance: number
 }
@@ -61,25 +61,40 @@ export default function Register() {
   const [selectedAccount, setSelectedAccount] = useState<number | ''>('')
   const [selectedCategory, setSelectedCategory] = useState<number | ''>('')
   const [offset, setOffset] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const limit = 50
 
   useEffect(() => {
-    fetch('/api/accounts').then(r => r.json()).then(setAccounts)
-    fetch('/api/categories').then(r => r.json()).then(setCategories)
+    Promise.all([
+      fetch('/api/accounts').then(r => { if (!r.ok) throw new Error(`accounts: HTTP ${r.status}`); return r.json() }),
+      fetch('/api/categories').then(r => { if (!r.ok) throw new Error(`categories: HTTP ${r.status}`); return r.json() }),
+    ])
+      .then(([accts, cats]) => {
+        setAccounts(accts)
+        setCategories(cats)
+      })
+      .catch(err => setError(String(err)))
   }, [])
 
-  const loadTransactions = useCallback(() => {
+  const loadTransactions = useCallback((signal?: AbortSignal) => {
     const params = new URLSearchParams()
     if (selectedAccount !== '') params.set('account_id', String(selectedAccount))
     if (selectedCategory !== '') params.set('category_id', String(selectedCategory))
     params.set('limit', String(limit))
     params.set('offset', String(offset))
-    fetch(`/api/transactions?${params}`)
-      .then(r => r.json())
+    setLoading(true)
+    fetch(`/api/transactions?${params}`, { signal })
+      .then(r => { if (!r.ok) throw new Error(`transactions: HTTP ${r.status}`); return r.json() })
       .then(data => {
         setTransactions(data.transactions)
         setTotal(data.total)
+        setError(null)
       })
+      .catch(err => {
+        if ((err as Error).name !== 'AbortError') setError(String(err))
+      })
+      .finally(() => setLoading(false))
   }, [selectedAccount, selectedCategory, offset])
 
   useEffect(() => {
@@ -87,12 +102,21 @@ export default function Register() {
   }, [selectedAccount, selectedCategory])
 
   useEffect(() => {
-    loadTransactions()
+    const ctrl = new AbortController()
+    loadTransactions(ctrl.signal)
+    return () => ctrl.abort()
   }, [loadTransactions])
 
   async function toggleCleared(tx: Transaction) {
-    await fetch(`/api/transactions/${tx.id}/cleared`, { method: 'PATCH' })
-    loadTransactions()
+    const prev = transactions
+    setTransactions(txs =>
+      txs.map(t => t.id === tx.id ? { ...t, is_cleared: (t.is_cleared ? 0 : 1) as 0 | 1 } : t)
+    )
+    const res = await fetch(`/api/transactions/${tx.id}/cleared`, { method: 'PATCH' })
+    if (!res.ok) {
+      setTransactions(prev)
+      setError(`Failed to update cleared status: HTTP ${res.status}`)
+    }
   }
 
   const parentCategories = categories.filter(c => c.parent_id === null && c.is_system === 0)
@@ -100,6 +124,11 @@ export default function Register() {
 
   return (
     <div className="p-4">
+      {error && (
+        <div className="mb-4 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4 items-center">
         <select
@@ -164,7 +193,11 @@ export default function Register() {
             </tr>
           </thead>
           <tbody>
-            {transactions.map(tx => (
+            {loading ? (
+              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">Loading…</td></tr>
+            ) : transactions.length === 0 ? (
+              <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">No transactions match these filters.</td></tr>
+            ) : transactions.map(tx => (
               <tr key={tx.id} className="border-b hover:bg-gray-50">
                 <td className="py-2 pr-4 text-gray-600">{tx.date}</td>
                 <td className="py-2 pr-4 font-medium">{tx.payee}</td>
@@ -192,7 +225,11 @@ export default function Register() {
 
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
-        {transactions.map(tx => (
+        {loading ? (
+          <p className="text-center text-gray-400 text-sm py-8">Loading…</p>
+        ) : transactions.length === 0 ? (
+          <p className="text-center text-gray-400 text-sm py-8">No transactions match these filters.</p>
+        ) : transactions.map(tx => (
           <div key={tx.id} className="bg-white rounded border p-3 flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <div className="font-medium truncate">{tx.payee}</div>
