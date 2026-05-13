@@ -93,6 +93,11 @@ describe('POST /api/categories', () => {
     const res = await request(app).post('/api/categories').send({ name: 'Ghost Child', parent_id: 9999 })
     expect(res.status).toBe(400)
   })
+
+  test('returns 400 for whitespace-only name', async () => {
+    const res = await request(app).post('/api/categories').send({ name: '   ' })
+    expect(res.status).toBe(400)
+  })
 })
 
 describe('PATCH /api/categories/:id', () => {
@@ -115,6 +120,12 @@ describe('PATCH /api/categories/:id', () => {
   test('returns 404 for unknown category', async () => {
     const res = await request(app).patch('/api/categories/9999').send({ name: 'Ghost' })
     expect(res.status).toBe(404)
+  })
+
+  test('returns 400 for empty name', async () => {
+    const id = getCategoryId('Groceries')
+    const res = await request(app).patch(`/api/categories/${id}`).send({ name: '   ' })
+    expect(res.status).toBe(400)
   })
 })
 
@@ -171,5 +182,16 @@ describe('POST /api/categories/reorder', () => {
   test('returns 400 for empty categories array', async () => {
     const res = await request(app).post('/api/categories/reorder').send({ categories: [] })
     expect(res.status).toBe(400)
+  })
+
+  test('returns 400 for unknown category id', async () => {
+    const grocId = getCategoryId('Groceries')
+    const res = await request(app).post('/api/categories/reorder').send({
+      categories: [{ id: 9999, sort_order: 5 }],
+    })
+    expect(res.status).toBe(400)
+    // known categories should not be affected
+    const groc = getDb().prepare('SELECT sort_order FROM categories WHERE id = ?').get(grocId) as { sort_order: number }
+    expect(groc.sort_order).toBe(0) // unchanged from seed value
   })
 })

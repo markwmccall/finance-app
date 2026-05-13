@@ -12,11 +12,17 @@ categoriesRouter.post('/reorder', (req: Request, res: Response) => {
       return
     }
     const update = db.prepare('UPDATE categories SET sort_order = ? WHERE id = ?')
+    let notFound: number | null = null
     db.transaction(() => {
       for (const { id, sort_order } of categories) {
-        update.run(sort_order, id)
+        const result = update.run(sort_order, id)
+        if (result.changes === 0) { notFound = id }
       }
     })()
+    if (notFound !== null) {
+      res.status(400).json({ error: `Category ${notFound} not found` })
+      return
+    }
     res.json({ ok: true })
   } catch (err) {
     console.error('POST /api/categories/reorder error:', err)
@@ -28,12 +34,13 @@ categoriesRouter.post('/', (req: Request, res: Response) => {
   try {
     const db = getDb()
     const { name, parent_id } = req.body as { name?: string; parent_id?: number }
-    if (!name) {
+    const trimmedName = name?.trim()
+    if (!trimmedName) {
       res.status(400).json({ error: 'name is required' })
       return
     }
     if (parent_id !== undefined) {
-      const parent = db.prepare('SELECT id FROM categories WHERE id = ?').get(parent_id)
+      const parent = db.prepare('SELECT id FROM categories WHERE id = ? AND is_active = 1').get(parent_id)
       if (!parent) {
         res.status(400).json({ error: 'Parent category not found' })
         return
@@ -41,7 +48,7 @@ categoriesRouter.post('/', (req: Request, res: Response) => {
     }
     const result = db.prepare(
       'INSERT INTO categories (name, parent_id, is_system, is_active, sort_order) VALUES (?, ?, 0, 1, 0)'
-    ).run(name, parent_id ?? null)
+    ).run(trimmedName, parent_id ?? null)
     res.status(201).json({ id: result.lastInsertRowid })
   } catch (err) {
     console.error('POST /api/categories error:', err)
@@ -65,11 +72,12 @@ categoriesRouter.patch('/:id', (req: Request, res: Response) => {
       return
     }
     const { name } = req.body as { name: string }
-    if (!name) {
+    const trimmedName = name?.trim()
+    if (!trimmedName) {
       res.status(400).json({ error: 'name is required' })
       return
     }
-    db.prepare('UPDATE categories SET name = ? WHERE id = ?').run(name, id)
+    db.prepare('UPDATE categories SET name = ? WHERE id = ?').run(trimmedName, id)
     res.json({ id })
   } catch (err) {
     console.error('PATCH /api/categories/:id error:', err)
