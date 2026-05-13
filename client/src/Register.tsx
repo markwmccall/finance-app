@@ -189,6 +189,201 @@ function SplitEditor({ tx, categories, onSaved }: SplitEditorProps) {
   )
 }
 
+interface ManualEntryFormProps {
+  accounts: Account[]
+  categories: Category[]
+  onSaved: () => void
+  onCancel: () => void
+}
+
+function ManualEntryForm({ accounts, categories, onSaved, onCancel }: ManualEntryFormProps) {
+  const today = new Date().toISOString().slice(0, 10)
+  const uncategorized = categories.find(c => c.name === 'Uncategorized')
+  const leafCategories = categories.filter(
+    c => !categories.some(other => other.parent_id === c.id)
+  )
+
+  const [date, setDate] = useState(today)
+  const [payee, setPayee] = useState('')
+  const [accountId, setAccountId] = useState<number | ''>(accounts[0]?.id ?? '')
+  const [amount, setAmount] = useState('')
+  const [drafts, setDrafts] = useState<SplitDraft[]>([
+    { category_id: uncategorized?.id ?? null, amount: '' },
+  ])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const parsedAmount = parseFloat(amount) || 0
+  const assignedSum = drafts.reduce((sum, d) => sum + (parseFloat(d.amount) || 0), 0)
+  const remainder = parseFloat((parsedAmount - assignedSum).toFixed(2))
+
+  function updateDraft(i: number, patch: Partial<SplitDraft>) {
+    setDrafts(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
+  }
+
+  function addRow() {
+    setDrafts(prev => [...prev, { category_id: null, amount: '' }])
+  }
+
+  function removeRow(i: number) {
+    setDrafts(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  function autoFill() {
+    if (!uncategorized || Math.abs(remainder) < 0.001) return
+    setDrafts(prev => [...prev, { category_id: uncategorized.id, amount: remainder.toFixed(2) }])
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!payee.trim()) { setError('Payee is required'); return }
+    if (accountId === '') { setError('Account is required'); return }
+    if (!parsedAmount) { setError('Amount is required'); return }
+    if (drafts.some(d => d.category_id === null)) { setError('All splits need a category'); return }
+    if (Math.abs(remainder) > 0.001) { setError('Splits must sum to transaction amount'); return }
+
+    setSaving(true)
+    setError('')
+    try {
+      const r = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account_id: Number(accountId),
+          date,
+          payee: payee.trim(),
+          amount: parsedAmount,
+          splits: drafts.map(d => ({
+            category_id: d.category_id,
+            amount: parseFloat(d.amount),
+          })),
+        }),
+      })
+      if (!r.ok) {
+        const body = await r.json()
+        setError(body.error ?? 'Save failed')
+      } else {
+        onSaved()
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mb-4 p-4 border rounded bg-white shadow-sm">
+      <h3 className="font-semibold text-sm mb-3">New Transaction</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className="w-full border rounded px-2 py-1 text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Payee</label>
+          <input
+            type="text"
+            value={payee}
+            onChange={e => setPayee(e.target.value)}
+            placeholder="Payee"
+            className="w-full border rounded px-2 py-1 text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Account</label>
+          <select
+            value={accountId}
+            onChange={e => setAccountId(Number(e.target.value))}
+            className="w-full border rounded px-2 py-1 text-sm"
+          >
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Amount (– for expense)</label>
+          <input
+            type="number"
+            step="0.01"
+            value={amount}
+            onChange={e => {
+              setAmount(e.target.value)
+              const val = parseFloat(e.target.value) || 0
+              setDrafts([{ category_id: uncategorized?.id ?? null, amount: val ? val.toFixed(2) : '' }])
+            }}
+            placeholder="-50.00"
+            className="w-full border rounded px-2 py-1 text-sm font-mono text-right"
+          />
+        </div>
+      </div>
+
+      <div className="text-xs text-gray-500 mb-1 font-medium">Splits</div>
+      <div className="space-y-2 mb-2">
+        {drafts.map((draft, i) => (
+          <div key={i} className="flex gap-2 items-center">
+            <div className="flex-1">
+              <CategoryPicker
+                categories={leafCategories}
+                value={draft.category_id}
+                onChange={catId => updateDraft(i, { category_id: catId })}
+              />
+            </div>
+            <input
+              type="number"
+              step="0.01"
+              value={draft.amount}
+              onChange={e => updateDraft(i, { amount: e.target.value })}
+              className="w-28 border rounded px-2 py-1 text-right text-sm font-mono"
+            />
+            {drafts.length > 1 && (
+              <button type="button" onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500 text-lg">×</button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <button type="button" onClick={addRow} className="text-indigo-600 text-xs hover:underline">+ Add row</button>
+        {Math.abs(remainder) > 0.001 && parsedAmount !== 0 && (
+          <>
+            <span className={`text-xs font-mono ${remainder < 0 ? 'text-red-500' : 'text-amber-600'}`}>
+              Remaining: {remainder > 0 ? '+' : ''}{remainder.toFixed(2)}
+            </span>
+            <button type="button" onClick={autoFill} className="text-xs text-gray-500 hover:underline">
+              Auto-fill to Uncategorized
+            </button>
+          </>
+        )}
+        {parsedAmount !== 0 && Math.abs(remainder) <= 0.001 && (
+          <span className="text-xs text-green-600">✓ Balanced</span>
+        )}
+      </div>
+
+      {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="bg-indigo-600 text-white text-sm px-4 py-1.5 rounded disabled:opacity-40"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-sm px-4 py-1.5 rounded border hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
 export default function Register() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -200,6 +395,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null)
+  const [showEntryForm, setShowEntryForm] = useState(false)
   const limit = 50
 
   useEffect(() => {
@@ -307,7 +503,7 @@ export default function Register() {
         </div>
 
         <button
-          onClick={() => {/* wired in Task 8 */}}
+          onClick={() => setShowEntryForm(true)}
           className="bg-indigo-600 text-white text-sm px-3 py-1 rounded hover:bg-indigo-700"
         >
           + Add Transaction
@@ -315,6 +511,15 @@ export default function Register() {
 
         <span className="ml-auto text-sm text-gray-500">{total} transactions</span>
       </div>
+
+      {showEntryForm && (
+        <ManualEntryForm
+          accounts={accounts}
+          categories={categories}
+          onSaved={() => { loadTransactions(); setShowEntryForm(false) }}
+          onCancel={() => setShowEntryForm(false)}
+        />
+      )}
 
       {/* Desktop table */}
       <div className="hidden md:block overflow-x-auto">
