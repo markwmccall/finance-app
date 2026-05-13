@@ -68,8 +68,20 @@ Rendered below the last transaction row (desktop) and below the last mobile card
 
 No new server tests are needed — the API is unchanged. Existing 92 tests continue to pass.
 
-A manual test checklist:
+### Testing the "Load older" button
+
+The seed data inserts 10 transactions for the checking account. To test the append flow without needing 500 real transactions, extract the threshold as a named constant:
+
+```typescript
+const INITIAL_TX_LIMIT = 500
+```
+
+Set it to `5` during development. The Register will load the 5 most recent transactions and show "Load 5 older transactions." Verify the button appears, appends the remaining 5, and scroll position is preserved. **Restore to `500` before opening the PR.**
+
+### Manual test checklist
 - [ ] Register loads without page controls
 - [ ] All transactions visible in a single scrollable list (for accounts with ≤ 500 transactions)
 - [ ] Changing account or category filter resets the list correctly
-- [ ] (If > 500 transactions exist) "Load older" button appears and appends without scrolling
+- [ ] "Load older" button appears when `INITIAL_TX_LIMIT = 5` and seed data is present
+- [ ] Clicking "Load older" appends remaining transactions without scrolling to top
+- [ ] `INITIAL_TX_LIMIT` restored to `500` before PR
