@@ -112,6 +112,11 @@ Returns all rows grouped by account. Used by the dashboard widget and the review
 
 Only accounts with at least one queue row are included.
 
+### Atomicity
+Every endpoint that touches more than one table wraps its work in a `better-sqlite3` synchronous transaction (`db.transaction(...)()`). This covers `accept` (both merge and insert-new paths), `merge-with`, and `accept-all`. `reject` and `undo-match` are single-statement and inherently atomic.
+
+If a transaction fails, the database rolls back completely — no partial state where a queue row is gone but the transaction was not updated, or vice versa.
+
 ### `POST /api/sync/queue/:id/accept`
 Accepts a queue item. Optional body: `{ force_new: true }`.
 
