@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Fragment } from 'react'
 import CategoryPicker from './CategoryPicker'
 
 interface Account {
@@ -335,8 +335,8 @@ export default function Register() {
             ) : transactions.length === 0 ? (
               <tr><td colSpan={6} className="py-8 text-center text-gray-400 text-sm">No transactions match these filters.</td></tr>
             ) : transactions.map(tx => (
-              <>
-                <tr key={tx.id} className="border-b hover:bg-gray-50">
+              <Fragment key={tx.id}>
+                <tr className="border-b hover:bg-gray-50">
                   <td className="py-2 pr-4 text-gray-600">{tx.date}</td>
                   <td className="py-2 pr-4 font-medium">{tx.payee}</td>
                   <td
@@ -362,7 +362,7 @@ export default function Register() {
                   </td>
                 </tr>
                 {expandedTxId === tx.id && (
-                  <tr key={`${tx.id}-expand`}>
+                  <tr>
                     <td colSpan={6} className="px-4 pb-3">
                       <SplitEditor
                         tx={tx}
@@ -372,7 +372,7 @@ export default function Register() {
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>
