@@ -154,6 +154,14 @@ export default function Accounts() {
     }
   }
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('sync') === '1') {
+      window.history.replaceState({}, '', '/accounts')
+      if (items.length > 0) handleSync()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items])
+
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-6">
