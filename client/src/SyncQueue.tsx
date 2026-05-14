@@ -206,7 +206,10 @@ export default function SyncQueue({ accountName, rows, onHighlight, onQueueChang
                 {row.status === 'new' && (
                   <>
                     <span className="bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded whitespace-nowrap">new</span>
-                    <span className="text-gray-400">will be added</span>
+                    <button
+                      onClick={e => { e.stopPropagation(); handleAccept(row) }}
+                      className="text-xs bg-green-600 text-white px-2 py-0.5 rounded hover:bg-green-700 shrink-0"
+                    >✓ Add</button>
                     <button
                       onClick={e => { e.stopPropagation(); handleReject(row) }}
                       className="text-red-500 hover:text-red-700 ml-1 shrink-0"

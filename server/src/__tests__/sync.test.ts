@@ -212,16 +212,16 @@ describe('POST /api/sync/queue/:id/merge-with', () => {
 })
 
 describe('POST /api/sync/queue/accept-all', () => {
-  test('accepts auto_matched and new rows, skips needs_review', async () => {
+  test('accepts only auto_matched rows, leaves needs_review and new in queue', async () => {
     seedFixture()
-    // auto_matched row (id=2) has no match_transaction_id set — it will follow insert-new path
+    // auto_matched row (id=2) has no match_transaction_id — follows insert-new path
     const res = await request(app).post('/api/sync/queue/accept-all').send({})
     expect(res.status).toBe(200)
-    expect(res.body.accepted).toBe(2)
+    expect(res.body.accepted).toBe(1)
 
-    const remaining = getDb().prepare('SELECT status FROM sync_review_queue').all() as Array<{ status: string }>
-    expect(remaining).toHaveLength(1)
-    expect(remaining[0].status).toBe('needs_review')
+    const remaining = getDb().prepare('SELECT status FROM sync_review_queue ORDER BY id').all() as Array<{ status: string }>
+    expect(remaining).toHaveLength(2)
+    expect(remaining.map(r => r.status)).toEqual(['needs_review', 'new'])
   })
 
   test('scopes to account_id when provided', async () => {
@@ -232,12 +232,12 @@ describe('POST /api/sync/queue/accept-all', () => {
     `).run()
     getDb().prepare(`
       INSERT INTO sync_review_queue (account_id, plaid_transaction_id, plaid_date, plaid_payee, plaid_amount, status)
-      VALUES (21, 'plaid-tx-savings', '2026-05-12', 'Paycheck', 2800.00, 'new')
+      VALUES (21, 'plaid-tx-savings-matched', '2026-05-12', 'Paycheck', 2800.00, 'auto_matched')
     `).run()
 
     const res = await request(app).post('/api/sync/queue/accept-all').send({ account_id: 20 })
     expect(res.status).toBe(200)
-    expect(res.body.accepted).toBe(2) // only account 20
+    expect(res.body.accepted).toBe(1) // only account 20's auto_matched row
 
     const savingsRow = getDb().prepare('SELECT * FROM sync_review_queue WHERE account_id = 21').get()
     expect(savingsRow).toBeDefined() // untouched

@@ -66,7 +66,7 @@ syncRouter.post('/queue/accept-all', (req, res) => {
     SELECT q.id, q.account_id, q.plaid_transaction_id, q.plaid_date, q.plaid_payee,
            q.plaid_amount, q.plaid_check_number, q.match_transaction_id, q.status
     FROM sync_review_queue q
-    WHERE q.status IN ('auto_matched', 'new')
+    WHERE q.status = 'auto_matched'
     ${account_id != null ? 'AND q.account_id = ?' : ''}
   `).all(...(account_id != null ? [account_id] : [])) as AcceptRow[]
 
