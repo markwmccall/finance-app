@@ -10,6 +10,29 @@ type PlaidItem = {
   last_synced_at: string | null
 }
 
+type SyncState =
+  | 'waiting'
+  | 'fetching_balances'
+  | 'fetching_transactions'
+  | 'processing'
+  | 'done'
+  | 'error'
+  | 'needs_reauth'
+
+type ItemProgress = {
+  item_id: number
+  institution_name: string
+  state: SyncState
+  page?: number
+  added?: number
+  needs_review?: number
+  auto_matched?: number
+  error_code?: string
+  error_message?: string
+  request_id?: string
+  error_expanded?: boolean
+}
+
 type ConnectButtonProps = {
   linkToken: string
   onConnected: () => void
@@ -46,7 +69,7 @@ export default function Accounts() {
   const [items, setItems] = useState<PlaidItem[]>([])
   const [linkToken, setLinkToken] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const [syncResults, setSyncResults] = useState<string | null>(null)
+  const [syncProgress, setSyncProgress] = useState<ItemProgress[]>([])
 
   const fetchStatus = useCallback(async () => {
     const res = await fetch('/api/plaid/status')
@@ -76,21 +99,68 @@ export default function Accounts() {
 
   const handleSync = async () => {
     setSyncing(true)
-    setSyncResults(null)
+    setSyncProgress(items.map(item => ({
+      item_id: item.id,
+      institution_name: item.institution_name,
+      state: 'waiting',
+    })))
+
+    function updateProgress(item_id: number, patch: Partial<ItemProgress>) {
+      setSyncProgress(prev => prev.map(p => p.item_id === item_id ? { ...p, ...patch } : p))
+    }
+
     try {
-      const res = await fetch('/api/plaid/sync', { method: 'POST' })
-      const data = await res.json()
-      const summary = data.results
-        .map((r: { id: number; status: string; added?: number }) =>
-          r.status === 'ok' ? `+${r.added ?? 0} transactions` : r.status
-        )
-        .join(', ')
-      setSyncResults(summary)
-      await fetchStatus()
+      const response = await fetch('/api/plaid/sync', {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream' },
+      })
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const blocks = buffer.split('\n\n')
+        buffer = blocks.pop() ?? ''
+
+        for (const block of blocks) {
+          const match = block.match(/^data:\s*(.+)$/m)
+          if (!match) continue
+          const event = JSON.parse(match[1]) as Record<string, unknown>
+
+          if (event.type === 'complete') {
+            await fetchStatus()
+            continue
+          }
+          const item_id = event.item_id as number
+          const state = event.state as SyncState
+          updateProgress(item_id, {
+            state,
+            page: event.page as number | undefined,
+            added: event.added as number | undefined,
+            needs_review: event.needs_review as number | undefined,
+            auto_matched: event.auto_matched as number | undefined,
+            error_code: event.error_code as string | undefined,
+            error_message: event.error_message as string | undefined,
+            request_id: event.request_id as string | undefined,
+          })
+        }
+      }
     } finally {
       setSyncing(false)
     }
   }
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('sync') === '1') {
+      window.history.replaceState({}, '', '/accounts')
+      if (items.length > 0) handleSync()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items])
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -110,9 +180,59 @@ export default function Accounts() {
         </div>
       </div>
 
-      {syncResults && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded text-sm text-green-800">
-          Sync complete: {syncResults}
+      {syncProgress.length > 0 && (
+        <div className="mb-4 border rounded divide-y text-sm">
+          {syncProgress.map(p => (
+            <div key={p.item_id} className="px-4 py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium">{p.institution_name}</span>
+                <span className="text-xs text-gray-500">
+                  {p.state === 'waiting' && 'waiting…'}
+                  {p.state === 'fetching_balances' && 'Fetching balances…'}
+                  {p.state === 'fetching_transactions' && `Fetching transactions${p.page && p.page > 1 ? ` (page ${p.page})` : ''}…`}
+                  {p.state === 'processing' && 'Processing…'}
+                  {p.state === 'done' && (
+                    <span>
+                      Done — {p.added ?? 0} new · {p.needs_review ?? 0} review needed{' '}
+                      <a href="/register" className="underline text-indigo-600 ml-1">Review →</a>
+                    </span>
+                  )}
+                  {p.state === 'needs_reauth' && <span className="text-amber-700">Re-auth required</span>}
+                  {p.state === 'error' && (
+                    <span className="text-red-700">
+                      Error — {p.error_code}{' '}
+                      <button
+                        onClick={() => setSyncProgress(prev => prev.map(x => x.item_id === p.item_id ? { ...x, error_expanded: !x.error_expanded } : x))}
+                        className="underline"
+                      >
+                        ▸ details
+                      </button>
+                    </span>
+                  )}
+                </span>
+              </div>
+              {(p.state === 'fetching_balances' || p.state === 'fetching_transactions' || p.state === 'processing') && (
+                <div className="h-1 rounded bg-gray-200 overflow-hidden">
+                  <div className="h-full bg-blue-500 animate-[slide_1.5s_ease-in-out_infinite] w-1/3" />
+                </div>
+              )}
+              {p.state === 'done' && <div className="h-1 rounded bg-green-500" />}
+              {p.error_expanded && (
+                <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs space-y-1">
+                  <div><span className="font-medium">Error code:</span> {p.error_code}</div>
+                  <div><span className="font-medium">Message:</span> {p.error_message}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Plaid request ID:</span>
+                    <code className="font-mono bg-gray-100 px-1 rounded">{p.request_id}</code>
+                    <button
+                      onClick={() => p.request_id && navigator.clipboard.writeText(p.request_id)}
+                      className="text-blue-600 hover:underline"
+                    >Copy</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -185,7 +305,15 @@ function ReAuthButton({ token, onSuccess }: { token: string; onSuccess: () => vo
     token,
     onSuccess: async () => {
       // After re-auth, trigger a sync to restore active status
-      await fetch('/api/plaid/sync', { method: 'POST' })
+      const response = await fetch('/api/plaid/sync', {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream' },
+      })
+      const reader = response.body!.getReader()
+      while (true) {
+        const { done } = await reader.read()
+        if (done) break
+      }
       onSuccess()
     },
   })

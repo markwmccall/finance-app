@@ -4,6 +4,7 @@ import { plaidRouter } from './plaid'
 import { accountsRouter } from './accounts'
 import { categoriesRouter } from './categories'
 import { transactionsRouter } from './transactions'
+import { syncRouter } from './sync'
 
 export const router = Router()
 
@@ -17,3 +18,4 @@ router.use('/plaid', plaidRouter)
 router.use('/accounts', accountsRouter)
 router.use('/categories', categoriesRouter)
 router.use('/transactions', transactionsRouter)
+router.use('/sync', syncRouter)

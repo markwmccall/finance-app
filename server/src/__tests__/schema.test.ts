@@ -168,3 +168,32 @@ test('migrateSchema is idempotent — running twice does not error', () => {
   expect(() => migrateSchema(db)).not.toThrow()
   expect(() => migrateSchema(db)).not.toThrow()
 })
+
+test('createTables creates sync_review_queue table', () => {
+  const db = getDb()
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_review_queue'").get()
+  expect(row).toBeDefined()
+})
+
+test('sync_review_queue has all required columns', () => {
+  const db = getDb()
+  const cols = db.prepare('PRAGMA table_info(sync_review_queue)').all() as Array<{ name: string }>
+  const names = cols.map(c => c.name)
+  for (const col of ['id', 'account_id', 'plaid_transaction_id', 'plaid_date', 'plaid_payee',
+    'plaid_amount', 'plaid_check_number', 'match_transaction_id', 'match_reason',
+    'match_confidence', 'status', 'created_at']) {
+    expect(names).toContain(col)
+  }
+})
+
+test('migrateSchema creates sync_review_queue when table is missing', () => {
+  const db = getDb()
+  db.exec('DROP TABLE IF EXISTS sync_review_queue')
+  const before = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_review_queue'").get()
+  expect(before).toBeUndefined()
+
+  migrateSchema(db)
+
+  const after = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_review_queue'").get()
+  expect(after).toBeDefined()
+})

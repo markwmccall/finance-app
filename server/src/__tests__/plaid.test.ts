@@ -177,168 +177,188 @@ describe('POST /api/plaid/sync', () => {
     `).run()
   }
 
+  function parseSseEvents(text: string): Array<Record<string, unknown>> {
+    return text
+      .split('\n')
+      .filter(l => l.startsWith('data: '))
+      .map(l => JSON.parse(l.slice(6)))
+  }
+
+  test('responds with text/event-stream content-type', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 600 } }] } })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: { added: [], modified: [], removed: [], has_more: false, next_cursor: 'cursor-1' },
+    })
+
+    const res = await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+    expect(res.status).toBe(200)
+    expect(res.headers['content-type']).toMatch(/text\/event-stream/)
+  })
+
+  test('parks added transactions in sync_review_queue, not transactions table', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 600 } }] } })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: {
+        added: [{
+          transaction_id: 'tx-1', account_id: 'acct-aaa', date: '2026-05-01',
+          name: 'Coffee', merchant_name: null, check_number: null, amount: 5.00, pending: false,
+        }],
+        modified: [], removed: [], has_more: false, next_cursor: 'cursor-1',
+      },
+    })
+
+    await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+
+    const db = getDb()
+    const txCount = (db.prepare(
+      'SELECT COUNT(*) as n FROM transactions WHERE plaid_transaction_id IS NOT NULL AND is_manual = 0'
+    ).get() as { n: number }).n
+    expect(txCount).toBe(0)
+
+    const queueCount = (db.prepare('SELECT COUNT(*) as n FROM sync_review_queue').get() as { n: number }).n
+    expect(queueCount).toBe(1)
+  })
+
+  test('emits done event with correct counts', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 600 } }] } })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: {
+        added: [{ transaction_id: 'tx-1', account_id: 'acct-aaa', date: '2026-05-01', name: 'Coffee', merchant_name: null, check_number: null, amount: 5.00, pending: false }],
+        modified: [], removed: [], has_more: false, next_cursor: 'cursor-1',
+      },
+    })
+
+    const res = await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+    const events = parseSseEvents(res.text)
+    const doneEvent = events.find(e => e.state === 'done') as { item_id: number; added: number } | undefined
+    expect(doneEvent).toBeDefined()
+    expect(doneEvent?.item_id).toBe(10)
+    expect(doneEvent?.added).toBe(1)
+  })
+
+  test('emits complete event at end', async () => {
+    seedItem(getDb())
+    mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] } })
+    mockTransactionsSync.mockResolvedValueOnce({
+      data: { added: [], modified: [], removed: [], has_more: false, next_cursor: 'cursor-z' },
+    })
+
+    const res = await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+    const events = parseSseEvents(res.text)
+    expect(events.find(e => e.type === 'complete')).toBeDefined()
+  })
+
   test('runs cursor loop until has_more is false', async () => {
     seedItem(getDb())
     mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 600 } }] } })
-    // First page: has_more = true
     mockTransactionsSync.mockResolvedValueOnce({
       data: {
-        added: [{ transaction_id: 'tx-1', account_id: 'acct-aaa', date: '2026-05-01', name: 'Coffee', merchant_name: null, amount: 5.00, pending: false }],
-        modified: [],
-        removed: [],
-        has_more: true,
-        next_cursor: 'cursor-page-2',
+        added: [{ transaction_id: 'tx-1', account_id: 'acct-aaa', date: '2026-05-01', name: 'Coffee', merchant_name: null, check_number: null, amount: 5.00, pending: false }],
+        modified: [], removed: [], has_more: true, next_cursor: 'cursor-page-2',
       },
     })
-    // Second page: has_more = false
     mockTransactionsSync.mockResolvedValueOnce({
       data: {
-        added: [{ transaction_id: 'tx-2', account_id: 'acct-aaa', date: '2026-05-02', name: 'Salary', merchant_name: null, amount: -2000.00, pending: false }],
-        modified: [],
-        removed: [],
-        has_more: false,
-        next_cursor: 'cursor-page-3',
+        added: [{ transaction_id: 'tx-2', account_id: 'acct-aaa', date: '2026-05-02', name: 'Salary', merchant_name: null, check_number: null, amount: -2000.00, pending: false }],
+        modified: [], removed: [], has_more: false, next_cursor: 'cursor-page-3',
       },
     })
 
-    const res = await request(app).post('/api/plaid/sync').send({})
-    expect(res.status).toBe(200)
+    await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+
     expect(mockTransactionsSync).toHaveBeenCalledTimes(2)
-    // Second call must pass the cursor from the first response
     expect(mockTransactionsSync.mock.calls[1][0].cursor).toBe('cursor-page-2')
 
-    const db = getDb()
-    const txs = db.prepare('SELECT * FROM transactions WHERE account_id = 20').all() as any[]
-    expect(txs).toHaveLength(2)
-    // tx-1: Plaid amount 5.00 (debit) → stored as -5.00
-    const coffee = txs.find((t: any) => t.plaid_transaction_id === 'tx-1')
-    expect(coffee?.amount).toBeCloseTo(-5.00)
-    // tx-2: Plaid amount -2000.00 (credit) → stored as +2000.00
-    const salary = txs.find((t: any) => t.plaid_transaction_id === 'tx-2')
-    expect(salary?.amount).toBeCloseTo(2000.00)
+    const queueCount = (getDb().prepare('SELECT COUNT(*) as n FROM sync_review_queue').get() as { n: number }).n
+    expect(queueCount).toBe(2)
   })
 
-  test('soft-deletes removed transactions', async () => {
+  test('soft-deletes removed transactions from the transactions table', async () => {
     seedItem(getDb())
-    // Seed an existing transaction to be removed
-    getDb().prepare(`
-      INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount)
-      VALUES (20, 'tx-old', '2026-04-01', 'Old Merchant', -10)
-    `).run()
+    getDb().prepare(
+      "INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount) VALUES (20, 'tx-old', '2026-04-01', 'Old Merchant', -10)"
+    ).run()
 
     mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 600 } }] } })
     mockTransactionsSync.mockResolvedValueOnce({
-      data: {
-        added: [],
-        modified: [],
-        removed: [{ transaction_id: 'tx-old' }],
-        has_more: false,
-        next_cursor: 'cursor-x',
-      },
+      data: { added: [], modified: [], removed: [{ transaction_id: 'tx-old' }], has_more: false, next_cursor: 'cursor-x' },
     })
 
-    await request(app).post('/api/plaid/sync').send({})
+    await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
 
-    const db = getDb()
-    const tx = db.prepare("SELECT is_removed FROM transactions WHERE plaid_transaction_id = 'tx-old'").get() as any
+    const tx = getDb().prepare("SELECT is_removed FROM transactions WHERE plaid_transaction_id = 'tx-old'").get() as { is_removed: number } | undefined
     expect(tx?.is_removed).toBe(1)
   })
 
-  test('updates account balance and cursor in a single DB transaction', async () => {
+  test('updates account balance and cursor', async () => {
     seedItem(getDb())
     mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 999.99 } }] } })
     mockTransactionsSync.mockResolvedValueOnce({
       data: { added: [], modified: [], removed: [], has_more: false, next_cursor: 'cursor-final' },
     })
 
-    await request(app).post('/api/plaid/sync').send({})
+    await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
 
-    const db = getDb()
-    const account = db.prepare('SELECT current_balance FROM accounts WHERE id = 20').get() as any
+    const account = getDb().prepare('SELECT current_balance FROM accounts WHERE id = 20').get() as { current_balance: number }
     expect(account.current_balance).toBeCloseTo(999.99)
 
-    const item = db.prepare('SELECT cursor, last_synced_at FROM plaid_items WHERE id = 10').get() as any
+    const item = getDb().prepare('SELECT cursor, last_synced_at FROM plaid_items WHERE id = 10').get() as { cursor: string; last_synced_at: string }
     expect(item.cursor).toBe('cursor-final')
     expect(item.last_synced_at).not.toBeNull()
   })
 
-  test('sets needs_reauth status on ITEM_LOGIN_REQUIRED', async () => {
+  test('emits needs_reauth event and sets item status on ITEM_LOGIN_REQUIRED', async () => {
     seedItem(getDb())
-    const plaidError = {
-      response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } },
-    }
-    mockAccountsGet.mockRejectedValueOnce(plaidError)
+    mockAccountsGet.mockRejectedValueOnce({ response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } } })
 
-    const res = await request(app).post('/api/plaid/sync').send({})
-    expect(res.status).toBe(200)
-    expect(res.body.results[0].status).toBe('needs_reauth')
+    const res = await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+    const events = parseSseEvents(res.text)
+    const reauthEvent = events.find(e => e.state === 'needs_reauth')
+    expect(reauthEvent).toBeDefined()
+    expect(reauthEvent?.item_id).toBe(10)
 
-    const db = getDb()
-    const item = db.prepare('SELECT status FROM plaid_items WHERE id = 10').get() as any
+    const item = getDb().prepare('SELECT status FROM plaid_items WHERE id = 10').get() as { status: string }
     expect(item.status).toBe('needs_reauth')
   })
 
-  test('stores check_number from Plaid transaction', async () => {
+  test('emits error event with error_code, error_message, and request_id', async () => {
     seedItem(getDb())
-    mockAccountsGet.mockResolvedValue({
-      data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] },
-    })
-    mockTransactionsSync.mockResolvedValueOnce({
-      data: {
-        added: [{
-          transaction_id: 'tx-check',
-          account_id: 'acct-aaa',
-          date: '2026-05-01',
-          name: 'Electric Company',
-          merchant_name: null,
-          check_number: '1247',
-          amount: 145.00,
-          pending: false,
-        }],
-        modified: [],
-        removed: [],
-        has_more: false,
-        next_cursor: 'cursor-x',
+    mockAccountsGet.mockRejectedValueOnce({
+      response: {
+        data: { error_code: 'RATE_LIMIT_EXCEEDED', error_message: 'Too many requests.', request_id: 'req-abc-123' },
       },
     })
 
-    await request(app).post('/api/plaid/sync').send({})
-
-    const tx = getDb()
-      .prepare("SELECT check_number FROM transactions WHERE plaid_transaction_id = 'tx-check'")
-      .get() as { check_number: string | null } | undefined
-    expect(tx?.check_number).toBe('1247')
+    const res = await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
+    const events = parseSseEvents(res.text)
+    const errorEvent = events.find(e => e.state === 'error') as { error_code: string; error_message: string; request_id: string } | undefined
+    expect(errorEvent?.error_code).toBe('RATE_LIMIT_EXCEEDED')
+    expect(errorEvent?.error_message).toBe('Too many requests.')
+    expect(errorEvent?.request_id).toBe('req-abc-123')
   })
 
-  test('stores null check_number when Plaid transaction has none', async () => {
+  test('check_number on Plaid transaction is stored in queue row', async () => {
     seedItem(getDb())
-    mockAccountsGet.mockResolvedValue({
-      data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] },
-    })
+    mockAccountsGet.mockResolvedValue({ data: { accounts: [{ account_id: 'acct-aaa', balances: { current: 500 } }] } })
     mockTransactionsSync.mockResolvedValueOnce({
       data: {
         added: [{
-          transaction_id: 'tx-nocheck',
-          account_id: 'acct-aaa',
-          date: '2026-05-01',
-          name: 'Starbucks',
-          merchant_name: 'Starbucks',
-          amount: 5.50,
-          pending: false,
+          transaction_id: 'tx-check', account_id: 'acct-aaa', date: '2026-05-01',
+          name: 'Electric Company', merchant_name: null, check_number: '1247', amount: 145.00, pending: false,
         }],
-        modified: [],
-        removed: [],
-        has_more: false,
-        next_cursor: 'cursor-y',
+        modified: [], removed: [], has_more: false, next_cursor: 'cursor-x',
       },
     })
 
-    await request(app).post('/api/plaid/sync').send({})
+    await request(app).post('/api/plaid/sync').set('Accept', 'text/event-stream')
 
-    const tx = getDb()
-      .prepare("SELECT check_number FROM transactions WHERE plaid_transaction_id = 'tx-nocheck'")
-      .get() as { check_number: string | null } | undefined
-    expect(tx?.check_number).toBeNull()
+    const qRow = getDb().prepare(
+      "SELECT plaid_check_number FROM sync_review_queue WHERE plaid_transaction_id = 'tx-check'"
+    ).get() as { plaid_check_number: string | null } | undefined
+    expect(qRow?.plaid_check_number).toBe('1247')
   })
 })
 

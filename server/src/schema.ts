@@ -67,6 +67,21 @@ export function createTables(db: Database.Database): void {
       category_id    INTEGER NOT NULL REFERENCES categories(id),
       amount         REAL    NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sync_review_queue (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id           INTEGER NOT NULL REFERENCES accounts(id),
+      plaid_transaction_id TEXT    NOT NULL UNIQUE,
+      plaid_date           TEXT    NOT NULL,
+      plaid_payee          TEXT    NOT NULL,
+      plaid_amount         REAL    NOT NULL,
+      plaid_check_number   TEXT,
+      match_transaction_id INTEGER REFERENCES transactions(id),
+      match_reason         TEXT,
+      match_confidence     REAL,
+      status               TEXT    NOT NULL,
+      created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 }
 
@@ -194,4 +209,21 @@ export function migrateSchema(db: Database.Database): void {
   if (!cols.some(c => c.name === 'check_number')) {
     db.exec('ALTER TABLE transactions ADD COLUMN check_number TEXT')
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_review_queue (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id           INTEGER NOT NULL REFERENCES accounts(id),
+      plaid_transaction_id TEXT    NOT NULL UNIQUE,
+      plaid_date           TEXT    NOT NULL,
+      plaid_payee          TEXT    NOT NULL,
+      plaid_amount         REAL    NOT NULL,
+      plaid_check_number   TEXT,
+      match_transaction_id INTEGER REFERENCES transactions(id),
+      match_reason         TEXT,
+      match_confidence     REAL,
+      status               TEXT    NOT NULL,
+      created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+    )
+  `)
 }

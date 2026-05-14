@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
 import CategoryPicker from './CategoryPicker'
 import CategoryPanel from './CategoryPanel'
 import TransactionEditor from './TransactionEditor'
+import SyncQueue, { type QueueRow } from './SyncQueue'
 
 interface Account {
   id: number
@@ -416,6 +417,10 @@ export default function Register() {
   const [showCategoryPanel, setShowCategoryPanel] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const pendingScrollToTxId = useRef<number | null>(null)
+  const [queue, setQueue] = useState<QueueRow[]>([])
+  const [queueSummary, setQueueSummary] = useState<Array<{ account_id: number; account_name: string; total: number }>>([])
+  const [highlightTxId, setHighlightTxId] = useState<number | null>(null)
+  const [pickModeQueueRowId, setPickModeQueueRowId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!loading && pendingScrollToTxId.current !== null) {
@@ -465,6 +470,48 @@ export default function Register() {
     return () => ctrl.abort()
   }, [loadTransactions])
 
+  const loadQueue = useCallback(() => {
+    fetch('/api/sync/queue')
+      .then(r => r.json())
+      .then(data => {
+        type AccountBucket = { account_id: number; account_name: string; auto_matched: QueueRow[]; needs_review: QueueRow[]; new: QueueRow[] }
+        const allAccounts = data.accounts as AccountBucket[]
+        setQueueSummary(
+          allAccounts
+            .map(a => ({ account_id: a.account_id, account_name: a.account_name, total: a.auto_matched.length + a.needs_review.length + a.new.length }))
+            .filter(a => a.total > 0)
+        )
+        const acct = allAccounts.find(a => a.account_id === selectedAccount)
+        setQueue(acct ? [...acct.auto_matched, ...acct.needs_review, ...acct.new] : [])
+      })
+      .catch(() => { setQueue([]); setQueueSummary([]) })
+  }, [selectedAccount])
+
+  useEffect(() => {
+    loadQueue()
+  }, [loadQueue])
+
+  async function handleMergeWithTx(transactionId: number) {
+    if (pickModeQueueRowId == null) return
+    try {
+      const res = await fetch(`/api/sync/queue/${pickModeQueueRowId}/merge-with`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_id: transactionId }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setError((data as { error?: string }).error ?? `Merge failed: HTTP ${res.status}`)
+        return
+      }
+      setPickModeQueueRowId(null)
+      setHighlightTxId(null)
+      loadQueue()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   async function toggleCleared(tx: Transaction) {
     const prev = transactions
     setTransactions(txs =>
@@ -504,6 +551,31 @@ export default function Register() {
           {error}
         </div>
       )}
+      {queue.length > 0 && (
+        <SyncQueue
+          accountName={accounts.find(a => a.id === selectedAccount)?.name ?? ''}
+          rows={queue}
+          onHighlight={setHighlightTxId}
+          onQueueChange={() => { loadQueue(); loadTransactions() }}
+          onPickModeChange={setPickModeQueueRowId}
+        />
+      )}
+
+      {queueSummary.length > 0 && queue.length === 0 && (
+        <div className="mb-3 flex items-center gap-2 flex-wrap text-sm bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          <span className="text-amber-800 font-medium">Pending review:</span>
+          {queueSummary.map(s => (
+            <button
+              key={s.account_id}
+              onClick={() => setSelectedAccount(s.account_id)}
+              className="text-indigo-600 hover:underline"
+            >
+              {s.account_name} ({s.total})
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4 items-center">
         <select
@@ -584,7 +656,16 @@ export default function Register() {
               <tr><td colSpan={7} className="py-8 text-center text-gray-400 text-sm">No transactions match these filters.</td></tr>
             ) : transactions.map(tx => (
               <Fragment key={tx.id}>
-                <tr className="border-b hover:bg-gray-50 group" data-tx-id={tx.id}>
+                <tr
+                  className={`border-b group ${
+                    highlightTxId === tx.id
+                      ? 'bg-amber-50 border-l-4 border-amber-400'
+                      : highlightTxId !== null
+                      ? 'opacity-30'
+                      : 'hover:bg-gray-50'
+                  }`}
+                  data-tx-id={tx.id}
+                >
                   <td className="py-2 pr-4 text-gray-600">{tx.date}</td>
                   <td className="py-2 pr-4 font-medium">
                     {tx.payee}
@@ -614,7 +695,16 @@ export default function Register() {
                     </button>
                   </td>
                   <td className="py-2 text-center">
-                    {editingTxId !== tx.id && (
+                    {pickModeQueueRowId !== null && (
+                      <button
+                        onClick={() => handleMergeWithTx(tx.id)}
+                        className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded hover:bg-amber-600"
+                        title="Merge this transaction with the selected Plaid transaction"
+                      >
+                        ↑ merge
+                      </button>
+                    )}
+                    {editingTxId !== tx.id && pickModeQueueRowId === null && (
                       <button
                         onClick={() => { setEditingTxId(tx.id); setExpandedTxId(null) }}
                         className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-indigo-600 text-sm px-1"
@@ -660,7 +750,17 @@ export default function Register() {
         ) : transactions.length === 0 ? (
           <p className="text-center text-gray-400 text-sm py-8">No transactions match these filters.</p>
         ) : transactions.map(tx => (
-          <div key={tx.id} className="bg-white rounded border" data-tx-id={tx.id}>
+          <div
+            key={tx.id}
+            className={`rounded border ${
+              highlightTxId === tx.id
+                ? 'bg-amber-50 border-amber-400 border-l-4'
+                : highlightTxId !== null
+                ? 'opacity-30'
+                : 'bg-white'
+            }`}
+            data-tx-id={tx.id}
+          >
             <div
               className="p-3 flex items-start gap-3 cursor-pointer"
               onClick={() => { setExpandedTxId(prev => prev === tx.id ? null : tx.id); setEditingTxId(null) }}
@@ -685,6 +785,14 @@ export default function Register() {
                 >
                   {tx.is_cleared ? '✓' : ''}
                 </button>
+                {pickModeQueueRowId !== null && (
+                  <button
+                    onClick={e => { e.stopPropagation(); handleMergeWithTx(tx.id) }}
+                    className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded"
+                  >
+                    ↑ merge
+                  </button>
+                )}
                 <button
                   onClick={e => { e.stopPropagation(); setEditingTxId(prev => prev === tx.id ? null : tx.id); setExpandedTxId(null) }}
                   className="text-gray-400 hover:text-indigo-600 text-sm px-1"
