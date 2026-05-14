@@ -584,14 +584,9 @@ export default function Register() {
           onChange={e => setSelectedAccount(e.target.value === '' ? '' : Number(e.target.value))}
         >
           <option value="">All Accounts</option>
-          {accounts.map(a => {
-            const pending = queueSummary.find(s => s.account_id === a.id)
-            return (
-              <option key={a.id} value={a.id}>
-                {a.name}{pending ? ` (${pending.total} pending)` : ''}
-              </option>
-            )
-          })}
+          {accounts.map(a => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
         </select>
 
         <div className="flex items-center gap-1">
