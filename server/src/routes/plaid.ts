@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { Products, CountryCode } from 'plaid'
 import { getPlaidClient } from '../plaid-client'
 import { getDb } from '../db'
+import { matchTransaction } from '../matching'
 
 export const plaidRouter = Router()
 
@@ -119,115 +120,141 @@ plaidRouter.post('/exchange-token', async (req, res) => {
 })
 
 // POST /api/plaid/sync
-// Syncs all active plaid_items. Returns per-item results.
+// Streams per-institution progress via SSE. Runs all institutions in parallel.
 plaidRouter.post('/sync', async (_req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  const emit = (event: Record<string, unknown>) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`)
+  }
+
   const db = getDb()
   const items = db.prepare(
     'SELECT id, plaid_item_id, access_token, cursor, status FROM plaid_items'
   ).all() as Array<{ id: number; plaid_item_id: string; access_token: string; cursor: string | null; status: string }>
 
-  const results: Array<{ id: number; status: string; added?: number; modified?: number; removed?: number }> = []
+  type PlaidTx = {
+    transaction_id: string; account_id: string; date: string
+    name: string; merchant_name?: string | null; check_number?: string | null
+    amount: number; pending: boolean
+  }
+  type RemovedTx = { transaction_id: string }
 
-  for (const item of items) {
+  const syncItem = async (item: typeof items[number]) => {
     try {
       const plaid = getPlaidClient()
 
-      // Step 1: Get current account balances
+      emit({ item_id: item.id, state: 'fetching_balances' })
       const accountsRes = await plaid.accountsGet({ access_token: item.access_token })
       const plaidAccounts = accountsRes.data.accounts
 
-      // Step 2: Cursor loop — accumulate all pages
-      type PlaidTx = { transaction_id: string; account_id: string; date: string; name: string; merchant_name?: string | null; check_number?: string | null; amount: number; pending: boolean }
-      type RemovedTx = { transaction_id: string }
       const added: PlaidTx[] = []
       const modified: PlaidTx[] = []
       const removed: RemovedTx[] = []
       let cursor = item.cursor ?? undefined
       let hasMore = true
+      let page = 0
 
       while (hasMore) {
-        const syncRes = await plaid.transactionsSync({
-          access_token: item.access_token,
-          cursor,
-        })
-        const page = syncRes.data
-        added.push(...(page.added as PlaidTx[]))
-        modified.push(...(page.modified as PlaidTx[]))
-        removed.push(...(page.removed as RemovedTx[]))
-        hasMore = page.has_more
-        cursor = page.next_cursor
+        page++
+        emit({ item_id: item.id, state: 'fetching_transactions', page })
+        const syncRes = await plaid.transactionsSync({ access_token: item.access_token, cursor })
+        const pageData = syncRes.data
+        added.push(...(pageData.added as PlaidTx[]))
+        modified.push(...(pageData.modified as PlaidTx[]))
+        removed.push(...(pageData.removed as RemovedTx[]))
+        hasMore = pageData.has_more
+        cursor = pageData.next_cursor
       }
 
-      // Step 3: Build account_id lookup (plaid_account_id → local id)
+      emit({ item_id: item.id, state: 'processing' })
+
       const accountRows = db
         .prepare('SELECT id, plaid_account_id FROM accounts WHERE plaid_item_id = ?')
         .all(item.id) as Array<{ id: number; plaid_account_id: string }>
-      const accountIdMap = new Map(accountRows.map((r) => [r.plaid_account_id, r.id]))
+      const accountIdMap = new Map(accountRows.map(r => [r.plaid_account_id, r.id]))
 
-      // Step 4: Single DB transaction — all writes or nothing
-      const upsertTx = db.prepare(`
-        INSERT INTO transactions (account_id, plaid_transaction_id, date, payee, amount, check_number, is_cleared)
-        VALUES (@account_id, @plaid_transaction_id, @date, @payee, @amount, @check_number, @is_cleared)
-        ON CONFLICT(plaid_transaction_id) DO UPDATE SET
-          date = excluded.date,
-          payee = excluded.payee,
-          amount = excluded.amount,
-          check_number = excluded.check_number,
-          is_cleared = excluded.is_cleared,
-          is_removed = 0
+      const insertQueue = db.prepare(`
+        INSERT OR IGNORE INTO sync_review_queue
+          (account_id, plaid_transaction_id, plaid_date, plaid_payee, plaid_amount, plaid_check_number,
+           match_transaction_id, match_reason, match_confidence, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
-      const softDelete = db.prepare(
-        'UPDATE transactions SET is_removed = 1 WHERE plaid_transaction_id = ?'
-      )
-      const updateBalance = db.prepare(
-        'UPDATE accounts SET current_balance = ? WHERE plaid_account_id = ?'
-      )
+      const softDelete = db.prepare('UPDATE transactions SET is_removed = 1 WHERE plaid_transaction_id = ?')
+      const updateBalance = db.prepare('UPDATE accounts SET current_balance = ? WHERE plaid_account_id = ?')
       const updateItem = db.prepare(
         "UPDATE plaid_items SET cursor = ?, last_synced_at = datetime('now') WHERE id = ?"
       )
-      const resetStatus = db.prepare(
-        "UPDATE plaid_items SET status = 'active' WHERE id = ?"
-      )
+      const resetStatus = db.prepare("UPDATE plaid_items SET status = 'active' WHERE id = ?")
+
+      let countAdded = 0
+      let countNeedsReview = 0
+      let countAutoMatched = 0
 
       db.transaction(() => {
         for (const tx of [...added, ...modified]) {
           const accountId = accountIdMap.get(tx.account_id)
           if (accountId == null) continue
-          upsertTx.run({
-            account_id: accountId,
-            plaid_transaction_id: tx.transaction_id,
-            date: tx.date,
-            payee: tx.merchant_name ?? tx.name,
-            amount: -(tx.amount),  // negate: Plaid positive=debit, we store negative=debit
-            check_number: tx.check_number ?? null,
-            is_cleared: tx.pending ? 0 : 1,
-          })
+
+          const candidates = db.prepare(`
+            SELECT id, date, payee, amount, check_number
+            FROM transactions
+            WHERE account_id = ? AND is_manual = 1 AND plaid_transaction_id IS NULL AND is_removed = 0
+          `).all(accountId) as Array<{ id: number; date: string; payee: string; amount: number; check_number: string | null }>
+
+          const plaidAmount = -(tx.amount)
+          const match = matchTransaction(
+            { date: tx.date, payee: tx.merchant_name ?? tx.name, amount: plaidAmount, check_number: tx.check_number ?? null },
+            candidates
+          )
+
+          let status: string
+          if (match?.reason === 'check_number') {
+            status = 'auto_matched'; countAutoMatched++
+          } else if (match?.reason === 'amount_date_payee') {
+            status = 'needs_review'; countNeedsReview++
+          } else {
+            status = 'new'; countAdded++
+          }
+
+          insertQueue.run(
+            accountId, tx.transaction_id, tx.date,
+            tx.merchant_name ?? tx.name, plaidAmount, tx.check_number ?? null,
+            match?.transaction_id ?? null, match?.reason ?? null, match?.confidence ?? null,
+            status
+          )
         }
-        for (const rt of removed) {
-          softDelete.run(rt.transaction_id)
-        }
-        for (const acct of plaidAccounts) {
-          updateBalance.run(acct.balances.current ?? 0, acct.account_id)
-        }
+        for (const rt of removed) softDelete.run(rt.transaction_id)
+        for (const acct of plaidAccounts) updateBalance.run(acct.balances.current ?? 0, acct.account_id)
         resetStatus.run(item.id)
         updateItem.run(cursor ?? null, item.id)
       })()
 
-      results.push({ id: item.id, status: 'ok', added: added.length, modified: modified.length, removed: removed.length })
+      emit({ item_id: item.id, state: 'done', added: countAdded, needs_review: countNeedsReview, auto_matched: countAutoMatched })
     } catch (err: unknown) {
-      const plaidErr = err as { response?: { data?: { error_code?: string } } }
+      const plaidErr = err as { response?: { data?: { error_code?: string; error_message?: string; request_id?: string } } }
       if (plaidErr.response?.data?.error_code === 'ITEM_LOGIN_REQUIRED') {
         db.prepare("UPDATE plaid_items SET status = 'needs_reauth' WHERE id = ?").run(item.id)
-        results.push({ id: item.id, status: 'needs_reauth' })
-        continue
+        emit({ item_id: item.id, state: 'needs_reauth' })
+        return
       }
-      const errData = (plaidErr as { response?: { data?: { error_code?: string; error_message?: string; request_id?: string } } }).response?.data
-      console.error(`sync error for item ${item.id}:`, errData?.error_code, errData?.error_message, errData?.request_id)
-      results.push({ id: item.id, status: 'error' })
+      const errData = plaidErr.response?.data
+      emit({
+        item_id: item.id,
+        state: 'error',
+        error_code: errData?.error_code ?? 'UNKNOWN',
+        error_message: errData?.error_message ?? 'An unexpected error occurred.',
+        request_id: errData?.request_id ?? null,
+      })
     }
   }
 
-  res.json({ results })
+  await Promise.allSettled(items.map(syncItem))
+  emit({ type: 'complete' })
+  res.end()
 })
 
 // GET /api/plaid/status
