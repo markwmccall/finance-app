@@ -418,6 +418,7 @@ export default function Register() {
   const [loadingMore, setLoadingMore] = useState(false)
   const pendingScrollToTxId = useRef<number | null>(null)
   const [queue, setQueue] = useState<QueueRow[]>([])
+  const [queueSummary, setQueueSummary] = useState<Array<{ account_id: number; account_name: string; total: number }>>([])
   const [highlightTxId, setHighlightTxId] = useState<number | null>(null)
   const [pickModeQueueRowId, setPickModeQueueRowId] = useState<number | null>(null)
 
@@ -470,19 +471,20 @@ export default function Register() {
   }, [loadTransactions])
 
   const loadQueue = useCallback(() => {
-    if (selectedAccount === '') { setQueue([]); return }
     fetch('/api/sync/queue')
       .then(r => r.json())
       .then(data => {
-        const acct = (data.accounts as Array<{ account_id: number; auto_matched: QueueRow[]; needs_review: QueueRow[]; new: QueueRow[] }>)
-          .find(a => a.account_id === selectedAccount)
-        if (acct) {
-          setQueue([...acct.auto_matched, ...acct.needs_review, ...acct.new])
-        } else {
-          setQueue([])
-        }
+        type AccountBucket = { account_id: number; account_name: string; auto_matched: QueueRow[]; needs_review: QueueRow[]; new: QueueRow[] }
+        const allAccounts = data.accounts as AccountBucket[]
+        setQueueSummary(
+          allAccounts
+            .map(a => ({ account_id: a.account_id, account_name: a.account_name, total: a.auto_matched.length + a.needs_review.length + a.new.length }))
+            .filter(a => a.total > 0)
+        )
+        const acct = allAccounts.find(a => a.account_id === selectedAccount)
+        setQueue(acct ? [...acct.auto_matched, ...acct.needs_review, ...acct.new] : [])
       })
-      .catch(() => setQueue([]))
+      .catch(() => { setQueue([]); setQueueSummary([]) })
   }, [selectedAccount])
 
   useEffect(() => {
@@ -559,6 +561,21 @@ export default function Register() {
         />
       )}
 
+      {queueSummary.length > 0 && queue.length === 0 && (
+        <div className="mb-3 flex items-center gap-2 flex-wrap text-sm bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          <span className="text-amber-800 font-medium">Pending review:</span>
+          {queueSummary.map(s => (
+            <button
+              key={s.account_id}
+              onClick={() => setSelectedAccount(s.account_id)}
+              className="text-indigo-600 hover:underline"
+            >
+              {s.account_name} ({s.total})
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4 items-center">
         <select
@@ -567,9 +584,14 @@ export default function Register() {
           onChange={e => setSelectedAccount(e.target.value === '' ? '' : Number(e.target.value))}
         >
           <option value="">All Accounts</option>
-          {accounts.map(a => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
+          {accounts.map(a => {
+            const pending = queueSummary.find(s => s.account_id === a.id)
+            return (
+              <option key={a.id} value={a.id}>
+                {a.name}{pending ? ` (${pending.total} pending)` : ''}
+              </option>
+            )
+          })}
         </select>
 
         <div className="flex items-center gap-1">
